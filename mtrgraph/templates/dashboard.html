@@ -1,0 +1,597 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .filter-bar { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; padding:12px 14px; background:#0b1220; border-radius:6px; margin-bottom:12px }
+  .filter-bar > div { flex:1; min-width:160px }
+  .filter-bar select, .filter-bar input { width:100%; padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-size:13px }
+  .filter-bar label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:14px }
+  .kpi { background:var(--panel); padding:12px 14px; border-radius:6px; border-top:3px solid var(--muted) }
+  .kpi .lab { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px }
+  .kpi .val { font-size:24px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums }
+  .kpi .sub { font-size:11px; color:var(--muted); margin-top:2px }
+  .kpi.green { border-top-color:var(--green) } .kpi.green .val { color:var(--green) }
+  .kpi.yellow { border-top-color:var(--yellow) } .kpi.yellow .val { color:var(--yellow) }
+  .kpi.red { border-top-color:var(--red) } .kpi.red .val { color:var(--red) }
+  .panel { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
+  .panel h3 { margin:0 0 10px 0; font-size:14px; color:var(--accent) }
+  .panel .help { font-size:11px; color:var(--muted); margin-bottom:8px }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr } }
+  .empty { padding:30px; text-align:center; color:var(--muted) }
+  table.compact { font-size:12px; width:100% }
+  table.compact td, table.compact th { padding:5px 8px }
+  .ip-bad { background:#7f1d1d; color:#fee2e2 }
+  .ip-warn { background:#7c2d12; color:#fed7aa }
+</style>
+
+<h2>Dashboard analyse — vision globale par endpoint</h2>
+
+<div class="filter-bar">
+  <div>
+    <label>Endpoint</label>
+    <select id="f-endpoint"><option value="">— choisis un endpoint —</option></select>
+  </div>
+  <div>
+    <label>Bucket</label>
+    <select id="f-bucket"><option value="">— tous —</option></select>
+  </div>
+  <div>
+    <label>Opération</label>
+    <select id="f-operation"><option value="">— toutes —</option></select>
+  </div>
+  <div>
+    <label>Plage</label>
+    <select id="f-range">
+      <option value="">tout</option>
+      <option value="15">15 dernières min</option>
+      <option value="60">1h</option>
+      <option value="360">6h</option>
+      <option value="1440">24h</option>
+      <option value="custom">custom (timestamp ±fenêtre)</option>
+    </select>
+  </div>
+  <div>
+    <label>Limite</label>
+    <input id="f-limit" type="number" value="200" min="20" max="2000">
+  </div>
+  <div>
+    <label>↻ Auto-refresh</label>
+    <select id="f-autorefresh">
+      <option value="0">Off</option>
+      <option value="1000">1s</option>
+      <option value="5000">5s</option>
+      <option value="10000">10s</option>
+      <option value="15000" selected>15s</option>
+      <option value="30000">30s</option>
+    </select>
+  </div>
+  <div style="flex:0">
+    <label>&nbsp;</label>
+    <button type="button" id="refresh-btn" style="padding:7px 14px; background:var(--accent); color:#020617; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600">↻ Refresh</button>
+  </div>
+</div>
+
+<div id="custom-bar" class="filter-bar" style="display:none; background:#451a03; border-left:3px solid #f59e0b">
+  <div style="flex:2">
+    <label>Centré sur (datetime local)</label>
+    <input id="f-center" type="datetime-local" step="1" style="font-family:monospace">
+  </div>
+  <div>
+    <label>Fenêtre (± minutes)</label>
+    <input id="f-window" type="number" value="15" min="1" max="1440">
+  </div>
+  <div style="flex:0">
+    <label>&nbsp;</label>
+    <button type="button" id="now-btn" style="padding:7px 12px; background:#334155; color:var(--fg); border:none; border-radius:4px; cursor:pointer; font-size:12px">📅 Maintenant</button>
+  </div>
+  <div style="flex:0">
+    <label>&nbsp;</label>
+    <button type="button" id="lookup-btn" style="padding:7px 12px; background:var(--accent); color:#020617; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600">🔍 Run le plus proche</button>
+  </div>
+</div>
+
+<div id="autorefresh-banner" style="display:none; padding:6px 14px; background:#0b1220; border-radius:4px; font-size:12px; color:var(--muted); margin-bottom:12px">
+  <span style="color:var(--accent)">●</span> Auto-refresh actif (<span id="ar-rate"></span>) — dernière mise à jour : <span id="ar-last">—</span>
+</div>
+
+<div id="dashboard-content">
+  <div class="empty">Sélectionne un endpoint pour afficher l'analyse.</div>
+</div>
+
+<script>
+const HTTP_THRESHOLDS = {
+  dns:[20,100,300], tcp:[20,100,300], tls:[50,200,500],
+  ttfb:[100,500,1500], total:[200,800,2500],
+};
+function tierClass(stage, v) {
+  if (v === null || v === undefined) return '';
+  const [g, y, r] = HTTP_THRESHOLDS[stage] || [50, 200, 500];
+  if (v >= r) return 'red';
+  if (v >= y) return 'yellow';
+  if (v >= g) return 'yellow';
+  return 'green';
+}
+function statusColor(s) {
+  if (!s) return '#dc2626';
+  if (s >= 200 && s < 300) return '#16a34a';
+  if (s >= 300 && s < 400) return '#22d3ee';
+  if (s >= 400 && s < 500) return '#eab308';
+  return '#dc2626';
+}
+const IP_COLORS = ['#38bdf8','#f472b6','#eab308','#22d3ee','#a78bfa','#fb923c','#34d399','#f87171'];
+
+const charts = {};
+function chart(elId, cfg) {
+  if (charts[elId]) charts[elId].destroy();
+  charts[elId] = new Chart(document.getElementById(elId), cfg);
+}
+
+async function loadFilters() {
+  const f = await fetch('/api/s3/filters').then(r => r.json());
+  function fill(id, items, current) {
+    const sel = document.getElementById(id);
+    const opt0 = id === 'f-endpoint'
+      ? '<option value="">— choisis un endpoint —</option>'
+      : '<option value="">— toutes —</option>';
+    sel.innerHTML = opt0 + items.map(v => `<option value="${v}" ${v === current ? 'selected' : ''}>${v}</option>`).join('');
+  }
+  const cur = currentFilter();
+  fill('f-endpoint', f.endpoints, cur.endpoint);
+  fill('f-bucket', f.buckets, cur.bucket);
+  fill('f-operation', f.operations, cur.operation);
+}
+
+function isoFromLocalInput(v) {
+  // datetime-local gives "YYYY-MM-DDTHH:MM:SS" interpreted as local; convert to UTC ISO
+  if (!v) return null;
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().replace(/\.\d{3}Z$/, '+00:00');
+}
+function isoMinusMinutes(min) {
+  return new Date(Date.now() - min * 60000).toISOString().replace(/\.\d{3}Z$/, '+00:00');
+}
+function isoOffset(ts, minutes) {
+  return new Date(new Date(ts).getTime() + minutes * 60000).toISOString().replace(/\.\d{3}Z$/, '+00:00');
+}
+
+function currentFilter() {
+  const range = document.getElementById('f-range').value;
+  const out = {
+    endpoint: document.getElementById('f-endpoint').value,
+    bucket:   document.getElementById('f-bucket').value,
+    operation:document.getElementById('f-operation').value,
+    limit:    parseInt(document.getElementById('f-limit').value || '200'),
+  };
+  if (range === 'custom') {
+    const center = isoFromLocalInput(document.getElementById('f-center').value);
+    const window = parseInt(document.getElementById('f-window').value || '15');
+    if (center) {
+      out.start_time = isoOffset(center, -window);
+      out.end_time   = isoOffset(center, +window);
+    }
+  } else if (range && range !== '') {
+    out.start_time = isoMinusMinutes(parseInt(range));
+  }
+  return out;
+}
+function qs(o) {
+  const p = new URLSearchParams();
+  Object.entries(o).forEach(([k, v]) => { if (v !== '' && v !== null && v !== undefined) p.set(k, v); });
+  return p.toString();
+}
+
+function fmtMs(v) { return v === null || v === undefined ? '—' : v.toFixed(1) + ' ms'; }
+function fmtMbps(v) { return v === null || v === undefined ? '—' : v.toFixed(2) + ' MB/s'; }
+
+function render(rows, kpis) {
+  const el = document.getElementById('dashboard-content');
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">Pas de données pour ce filtre. Lance des tests ou crée un schedule.</div>';
+    return;
+  }
+  const labels = rows.map(r => r.started_at.replace('T', ' ').slice(5, 16));
+  const ips = [...new Set(rows.map(r => r.resolved_ip || '?'))];
+
+  // KPI tiles
+  const errCls = kpis.err_pct >= 10 ? 'red' : kpis.err_pct >= 1 ? 'yellow' : 'green';
+  const p95Cls = kpis.p95_total_ms >= 2500 ? 'red' : kpis.p95_total_ms >= 800 ? 'yellow' : 'green';
+
+  el.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="lab">Runs</div><div class="val">${kpis.count}</div><div class="sub">${ips.length} IP(s)</div></div>
+      <div class="kpi ${errCls}"><div class="lab">Erreurs</div><div class="val">${kpis.err_pct}%</div><div class="sub">${kpis.err_count} / ${kpis.count}</div></div>
+      <div class="kpi"><div class="lab">Avg Total</div><div class="val">${fmtMs(kpis.avg_total_ms)}</div></div>
+      <div class="kpi"><div class="lab">P50 Total</div><div class="val">${fmtMs(kpis.p50_total_ms)}</div></div>
+      <div class="kpi ${p95Cls}"><div class="lab">P95 Total</div><div class="val">${fmtMs(kpis.p95_total_ms)}</div></div>
+      <div class="kpi"><div class="lab">P99 Total</div><div class="val">${fmtMs(kpis.p99_total_ms)}</div></div>
+      <div class="kpi"><div class="lab">Avg TTFB</div><div class="val">${fmtMs(kpis.avg_ttfb_ms)}</div></div>
+      <div class="kpi"><div class="lab">P95 TTFB</div><div class="val">${fmtMs(kpis.p95_ttfb_ms)}</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>1. Étapes HTTP/S3 (DNS / TCP / TLS / TTFB / Total)</h3>
+      <div class="help">Empilées dans le temps. Si l'une dérive, on voit laquelle.</div>
+      <canvas id="ch-stages" height="80"></canvas>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>2. Réseau (RTT MTR) vs TTFB applicatif</h3>
+        <div class="help">RTT mesuré par MTR vers la même IP, comparé au TTFB observé côté S3.</div>
+        <canvas id="ch-rtt" height="180"></canvas>
+      </div>
+      <div class="panel">
+        <h3>3. Server processing time ≈ TTFB − RTT</h3>
+        <div class="help">Estimation du temps purement passé côté serveur S3 (sans le réseau).</div>
+        <canvas id="ch-server" height="180"></canvas>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>4. Throughput (GET/PUT, MB/s)</h3>
+        <div class="help">bytes_transferred / duration. Seulement les ops avec données.</div>
+        <canvas id="ch-throughput" height="180"></canvas>
+      </div>
+      <div class="panel">
+        <h3>5. Statut par run · vert OK · jaune 4xx · <span style="color:#dc2626">rouge erreur/5xx</span></h3>
+        <div class="help">Hauteur identique, couleur = type de statut. Survole pour voir le code HTTP.</div>
+        <canvas id="ch-status" height="180"></canvas>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>6. Taux d'erreurs glissant (bucket de 10 runs)</h3>
+      <div class="help">Moyenne mobile sur fenêtre glissante de 10 runs. Permet de spotter une rafale d'erreurs.</div>
+      <canvas id="ch-errrate" height="100"></canvas>
+    </div>
+
+    <div class="panel" id="errors-panel" style="border-left:3px solid var(--red); display:none">
+      <h3 style="color:var(--red)">⚠ Erreurs récentes <span id="errors-count" style="font-weight:400;color:var(--muted);font-size:13px"></span></h3>
+      <div class="help">Clique sur une ligne pour zoomer sur ce moment dans la timeline.</div>
+      <div id="errors-list"></div>
+    </div>
+
+    <div class="panel" id="tcp-panel">
+      <h3>7. TCP retransmissions (kernel /proc/net/snmp)</h3>
+      <div class="help" id="tcp-help">Requiert un schedule de type <strong>tcp</strong> qui échantillonne périodiquement. Si vide : crée-en un dans <a href="/schedules" style="color:var(--accent)">/schedules</a>.</div>
+      <canvas id="ch-tcp" height="120"></canvas>
+    </div>
+
+    <div class="panel">
+      <h3>Distribution des opérations (sur les ${kpis.count} runs)</h3>
+      <table class="compact">
+        <thead><tr><th>Opération</th><th>Runs</th></tr></thead>
+        <tbody>
+        ${Object.entries(kpis.ops_distribution || {}).sort((a,b)=>b[1]-a[1]).map(([op, n]) =>
+          `<tr><td><strong>${op.toUpperCase()}</strong></td><td>${n}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>IPs résolues observées</h3>
+      <div style="font-family:monospace; font-size:12px">${ips.join('  ·  ')}</div>
+    </div>
+  `;
+
+  // Chart 1: stacked stages over time
+  chart('ch-stages', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'DNS',   data: rows.map(r => r.dns_ms),      borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.35)', tension:.2, fill:true, stack:'s1' },
+      { label:'TCP',   data: rows.map(r => r.tcp_ms),      borderColor:'#22d3ee', backgroundColor:'rgba(34,211,238,.35)', tension:.2, fill:true, stack:'s1' },
+      { label:'TLS',   data: rows.map(r => r.tls_ms),      borderColor:'#f472b6', backgroundColor:'rgba(244,114,182,.35)', tension:.2, fill:true, stack:'s1' },
+      { label:'TTFB',  data: rows.map(r => r.ttfb_ms),     borderColor:'#eab308', backgroundColor:'rgba(234,179,8,.35)', tension:.2, fill:true, stack:'s1' },
+    ]},
+    options:{ responsive:true, scales:{
+      y:{ stacked:true, ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'}},
+      x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20}}
+    }, plugins:{ legend:{labels:{color:'#e2e8f0'}}}}
+  });
+
+  // Chart 2: RTT vs TTFB
+  chart('ch-rtt', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'TTFB (S3)', data: rows.map(r => r.ttfb_ms), borderColor:'#eab308', backgroundColor:'rgba(234,179,8,.2)', tension:.2, fill:true },
+      { label:'RTT (MTR last hop)', data: rows.map(r => r.network_rtt_ms), borderColor:'#22d3ee', tension:.2, fill:false, borderDash:[6, 3] },
+    ]},
+    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'} }, x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} } }, plugins:{ legend:{labels:{color:'#e2e8f0'}}} }
+  });
+
+  // Chart 3: server processing
+  chart('ch-server', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Server processing ≈ TTFB − RTT', data: rows.map(r => r.server_processing_ms), borderColor:'#f472b6', backgroundColor:'rgba(244,114,182,.2)', tension:.2, fill:true },
+    ]},
+    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'} }, x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} } }, plugins:{ legend:{labels:{color:'#e2e8f0'}}} }
+  });
+
+  // Chart 4: throughput
+  const tpRows = rows.map(r => r.throughput_mbps);
+  chart('ch-throughput', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Throughput', data: tpRows, borderColor:'#34d399', backgroundColor:'rgba(52,211,153,.2)', tension:.2, fill:true, spanGaps:false },
+    ]},
+    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'MB/s', color:'#94a3b8'} }, x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} } }, plugins:{ legend:{labels:{color:'#e2e8f0'}}} }
+  });
+
+  // Chart 5: status — constant-height bars colored by status type
+  chart('ch-status', {
+    type:'bar',
+    data:{ labels, datasets:[{
+      label:'Statut',
+      data: rows.map(_ => 1),
+      backgroundColor: rows.map(r => statusColor(r.http_status)),
+      borderWidth: 0,
+    }]},
+    options:{
+      responsive:true,
+      scales:{
+        y:{ display:false, max:1.2 },
+        x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} }
+      },
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          callbacks:{
+            label: (ctx) => {
+              const r = rows[ctx.dataIndex];
+              const s = r.http_status || 'ERR';
+              const err = r.error ? ` · ${r.error.slice(0, 60)}` : '';
+              const sum = r.response_summary ? ` · ${r.response_summary.slice(0, 60)}` : '';
+              return `${r.operation.toUpperCase()} → ${s}${err || sum}`;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Chart 6: rolling error rate (window of 10 runs)
+  const win = 10;
+  const errFlags = rows.map(r => (r.error || (r.http_status && r.http_status >= 400)) ? 1 : 0);
+  const rollErr = errFlags.map((_, i) => {
+    const lo = Math.max(0, i - win + 1);
+    const slice = errFlags.slice(lo, i + 1);
+    return (slice.reduce((a,b)=>a+b,0) / slice.length) * 100;
+  });
+  chart('ch-errrate', {
+    type:'line',
+    data:{ labels, datasets:[{
+      label:'% erreurs (10 derniers runs)',
+      data: rollErr,
+      borderColor:'#dc2626',
+      backgroundColor:'rgba(220,38,38,.25)',
+      tension:.2, fill:true,
+    }]},
+    options:{
+      responsive:true,
+      scales:{
+        y:{ ticks:{color:'#94a3b8'}, min:0, suggestedMax:10, title:{display:true,text:'%', color:'#94a3b8'} },
+        x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} }
+      },
+      plugins:{ legend:{labels:{color:'#e2e8f0'}}}
+    }
+  });
+}
+
+async function renderErrors() {
+  const f = currentFilter();
+  if (!f.endpoint) return;
+  const rows = await fetch('/api/dashboard/errors?' + qs(f) + '&limit=50').then(r => r.json());
+  const panel = document.getElementById('errors-panel');
+  const list = document.getElementById('errors-list');
+  const count = document.getElementById('errors-count');
+  if (!rows.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  count.textContent = `(${rows.length} affichées)`;
+  list.innerHTML = `
+    <table class="compact">
+      <thead><tr><th>Quand</th><th>Op</th><th>Status</th><th>IP</th><th>Résumé / erreur</th><th></th></tr></thead>
+      <tbody>
+      ${rows.map(r => {
+        const sc = statusColor(r.http_status);
+        const msg = (r.response_summary || r.error || '').replace(/</g,'&lt;');
+        return `<tr style="border-bottom:1px solid #334155">
+          <td style="color:var(--muted);font-family:monospace;font-size:11px">${r.started_at.replace('T',' ').slice(5, 19)}</td>
+          <td><strong>${r.operation.toUpperCase()}</strong></td>
+          <td><span style="background:${sc};color:#020617;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${r.http_status || 'ERR'}</span></td>
+          <td style="font-family:monospace;font-size:11px">${r.resolved_ip || '?'}</td>
+          <td style="font-size:11px;max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${msg.replace(/"/g,'&quot;')}">${msg}</td>
+          <td><button onclick="jumpTo('${r.started_at}')" style="background:#334155;border:none;color:var(--fg);padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px">🔍 Zoomer</button></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function renderTcp() {
+  const f = currentFilter();
+  const params = new URLSearchParams();
+  if (f.start_time) params.set('start_time', f.start_time);
+  if (f.end_time) params.set('end_time', f.end_time);
+  params.set('limit', '500');
+  const rows = await fetch('/api/dashboard/tcp?' + params.toString()).then(r => r.json());
+  const help = document.getElementById('tcp-help');
+  if (!rows.length) {
+    help.innerHTML = 'Aucun sample TCP. Crée un schedule de type <strong>tcp</strong> dans <a href="/schedules" style="color:var(--accent)">/schedules</a> (par défaut sample toutes les 60s).';
+    if (charts['ch-tcp']) { charts['ch-tcp'].destroy(); delete charts['ch-tcp']; }
+    return;
+  }
+  help.textContent = `${rows.length} samples · plus le % est haut, plus il y a de retransmissions TCP.`;
+  const labels = rows.map(r => r.started_at.replace('T',' ').slice(5, 16));
+  chart('ch-tcp', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Retrans %', data: rows.map(r => r.retrans_pct), borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.25)', tension:.2, fill:true, yAxisID:'y' },
+      { label:'OutSegs/s', data: rows.map(r => r.out_per_s), borderColor:'#94a3b8', tension:.2, fill:false, borderDash:[6,3], yAxisID:'y1' },
+    ]},
+    options:{ responsive:true, scales:{
+      y:{ position:'left', ticks:{color:'#94a3b8'}, title:{display:true,text:'%', color:'#94a3b8'}, beginAtZero:true, suggestedMax:2 },
+      y1:{ position:'right', ticks:{color:'#94a3b8'}, title:{display:true,text:'segs/s', color:'#94a3b8'}, grid:{drawOnChartArea:false} },
+      x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} }
+    }, plugins:{ legend:{labels:{color:'#e2e8f0'}}}}
+  });
+}
+
+function jumpTo(iso) {
+  // Set range=custom, fill center with this iso (local time), keep window 15min
+  document.getElementById('f-range').value = 'custom';
+  document.getElementById('custom-bar').style.display = 'flex';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  document.getElementById('f-center').value =
+    `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  lookupClosest();
+  reload();
+}
+
+async function reload() {
+  const f = currentFilter();
+  if (!f.endpoint) {
+    document.getElementById('dashboard-content').innerHTML = '<div class="empty">Sélectionne un endpoint pour afficher l\'analyse.</div>';
+    return;
+  }
+  const [series, kpis] = await Promise.all([
+    fetch('/api/dashboard/series?' + qs(f)).then(r => r.json()),
+    fetch('/api/dashboard/kpis?' + qs(f)).then(r => r.json()),
+  ]);
+  render(series, kpis);
+  renderErrors();
+  renderTcp();
+}
+
+['f-endpoint','f-bucket','f-operation','f-limit'].forEach(id =>
+  document.getElementById(id).addEventListener('change', reload)
+);
+document.getElementById('refresh-btn').addEventListener('click', reload);
+
+// ── Range/custom toggle ──
+document.getElementById('f-range').addEventListener('change', (e) => {
+  document.getElementById('custom-bar').style.display = (e.target.value === 'custom') ? 'flex' : 'none';
+  reload();
+});
+document.getElementById('f-center').addEventListener('change', reload);
+document.getElementById('f-window').addEventListener('change', reload);
+document.getElementById('now-btn').addEventListener('click', () => {
+  // Fill the datetime-local input with current local time, seconds precision
+  const now = new Date();
+  now.setSeconds(now.getSeconds()); // noop, just ensure seconds
+  const pad = (n) => String(n).padStart(2, '0');
+  document.getElementById('f-center').value =
+    `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  reload();
+});
+document.getElementById('lookup-btn').addEventListener('click', lookupClosest);
+
+// ── Auto-refresh dynamique ──
+let arTimer = null;
+function setupAutoRefresh() {
+  if (arTimer) { clearInterval(arTimer); arTimer = null; }
+  const rate = parseInt(document.getElementById('f-autorefresh').value || '0');
+  const banner = document.getElementById('autorefresh-banner');
+  if (rate <= 0) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'block';
+  document.getElementById('ar-rate').textContent = (rate / 1000) + 's';
+  arTimer = setInterval(() => {
+    reload();
+    document.getElementById('ar-last').textContent = new Date().toLocaleTimeString();
+  }, rate);
+}
+document.getElementById('f-autorefresh').addEventListener('change', setupAutoRefresh);
+
+// ── Lookup closest run ──
+async function lookupClosest() {
+  const center = isoFromLocalInput(document.getElementById('f-center').value);
+  if (!center) { toast(`Renseigne d'abord le timestamp`, 'warn'); return; }
+  const f = currentFilter();
+  if (!f.endpoint) { toast(`Choisis d'abord un endpoint`, 'warn'); return; }
+  const win = parseInt(document.getElementById('f-window').value || '15');
+  const q = new URLSearchParams({
+    endpoint: f.endpoint, timestamp: center, window_minutes: String(win),
+  });
+  if (f.bucket) q.set('bucket', f.bucket);
+  if (f.operation) q.set('operation', f.operation);
+  const r = await fetch('/api/dashboard/closest-run?' + q.toString()).then(r => r.json());
+  showClosestPanel(r);
+}
+
+function tierColor(stage, v) {
+  if (v === null || v === undefined) return '#666';
+  const [g, y, r] = HTTP_THRESHOLDS[stage] || [50, 200, 500];
+  if (v >= r) return '#b91c1c';
+  if (v >= y) return '#dc2626';
+  if (v >= g) return '#eab308';
+  return '#16a34a';
+}
+function showClosestPanel(res) {
+  const existing = document.getElementById('closest-panel');
+  if (existing) existing.remove();
+  const target = document.getElementById('dashboard-content');
+  const panel = document.createElement('div');
+  panel.id = 'closest-panel';
+  panel.className = 'panel';
+  panel.style.borderLeft = '3px solid #f59e0b';
+  panel.style.background = '#0b1220';
+  if (!res.found) {
+    panel.innerHTML = `<h3>🔍 Run le plus proche</h3>
+      <div class="empty">Aucun run trouvé dans la fenêtre ±${res.window_minutes} min. Élargis la fenêtre ou ajuste le timestamp.</div>`;
+  } else {
+    const r = res.run;
+    const cell = (label, key, v, unit = 'ms') => `
+      <div class="kpi" style="background:#020617; border-top-color:${tierColor(key, v)}">
+        <div class="lab">${label}</div>
+        <div class="val" style="color:${tierColor(key, v)}">${v === null || v === undefined ? '—' : v.toFixed(1)}<span style="font-size:11px;color:var(--muted)"> ${unit}</span></div>
+      </div>`;
+    const sc = statusColor(r.http_status);
+    panel.innerHTML = `<h3>🔍 Run le plus proche — #${r.id} <span style="font-weight:400;color:var(--muted);font-size:12px">(${res.delta_seconds.toFixed(1)}s d'écart avec le timestamp choisi)</span></h3>
+      <div class="help">${r.operation.toUpperCase()} ${r.bucket || ''}${r.key ? '/' + r.key : ''} · IP ${r.resolved_ip || '?'} · ${r.started_at}</div>
+      <div class="kpis" style="margin:10px 0">
+        <div class="kpi" style="background:#020617"><div class="lab">Status</div><div class="val" style="color:${sc}">${r.http_status || 'ERR'}</div></div>
+        ${cell('DNS', 'dns', r.dns_ms)}
+        ${cell('TCP', 'tcp', r.tcp_ms)}
+        ${cell('TLS', 'tls', r.tls_ms)}
+        ${cell('TTFB', 'ttfb', r.ttfb_ms)}
+        ${cell('Total', 'total', r.duration_ms)}
+        ${cell('Network RTT', 'tcp', r.network_rtt_ms)}
+        ${cell('Server processing', 'ttfb', r.server_processing_ms)}
+      </div>
+      ${r.throughput_mbps !== null && r.throughput_mbps !== undefined ? `<div style="margin-top:8px"><strong>Throughput :</strong> ${r.throughput_mbps.toFixed(2)} MB/s</div>` : ''}
+      ${r.response_summary ? `<div style="margin-top:8px;font-family:monospace;font-size:12px;background:#020617;padding:8px;border-radius:4px">${r.response_summary.replace(/</g,'&lt;')}</div>` : ''}
+      ${r.error ? `<div style="margin-top:8px;background:#7f1d1d;color:#fee2e2;padding:8px;border-radius:4px;font-family:monospace;font-size:12px">${r.error.replace(/</g,'&lt;')}</div>` : ''}`;
+  }
+  target.insertBefore(panel, target.firstChild);
+}
+
+// Toast helper for the dashboard
+function toast(msg, kind) {
+  let area = document.getElementById('toast-area-d');
+  if (!area) {
+    area = document.createElement('div');
+    area.id = 'toast-area-d';
+    area.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:380px';
+    document.body.appendChild(area);
+  }
+  const el = document.createElement('div');
+  el.style.cssText = `background:var(--panel);border-left:4px solid ${kind === 'warn' ? '#eab308' : kind === 'err' ? '#dc2626' : '#16a34a'};padding:10px 14px;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.4);font-size:13px;animation:slideIn .2s`;
+  el.textContent = msg;
+  area.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+loadFilters().then(reload);
+setupAutoRefresh();
+</script>
+{% endblock %}

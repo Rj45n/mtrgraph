@@ -1,0 +1,60 @@
+{{- if .Values.httpDaemon.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mtrgraph.fullname" . }}-http-daemon
+  labels:
+    {{- include "mtrgraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: http-daemon
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "mtrgraph.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: http-daemon
+  template:
+    metadata:
+      labels:
+        {{- include "mtrgraph.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: http-daemon
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: http-daemon
+          image: {{ include "mtrgraph.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "mtrgraph.cli"]
+          args:
+            - "http-daemon"
+            - {{ .Values.httpDaemon.url | quote }}
+            - "--every"
+            - {{ .Values.httpDaemon.intervalSeconds | quote }}
+            - "-c"
+            - {{ .Values.httpDaemon.count | quote }}
+            - "-m"
+            - {{ .Values.httpDaemon.method | quote }}
+            - "--baseline-n"
+            - {{ .Values.httpDaemon.baselineN | quote }}
+            - "--error-threshold"
+            - {{ .Values.httpDaemon.errorThresholdPct | quote }}
+            - "--db"
+            - "/data/mtrgraph.db"
+            - "--label"
+            - "helm-http"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mtrgraph.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,661 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .sched-grid { display:grid; grid-template-columns: 1fr 380px; gap:18px; align-items:start }
+  @media (max-width: 1100px) { .sched-grid { grid-template-columns: 1fr } }
+  fieldset { border:1px solid #334155; border-radius:6px; padding:12px 14px; margin:10px 0; background:#0b1220 }
+  legend { color:var(--accent); font-size:13px; padding:0 6px }
+  label.row { display:block; margin:8px 0; font-size:13px; color:var(--muted) }
+  label.row input, label.row select, label.row textarea { width:100%; margin-top:3px; padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-family:inherit; font-size:13px }
+  label.row textarea { font-family:monospace; min-height:80px }
+  label.row input:focus, label.row select:focus { outline:none; border-color:var(--accent) }
+  .inline { display:flex; gap:8px }
+  .inline > * { flex:1 }
+  button.run { width:100%; padding:10px; background:var(--accent); color:#020617; border:none; border-radius:4px; font-weight:600; font-size:14px; cursor:pointer; margin-top:8px }
+  button.run:hover { background:#0ea5e9 }
+  button.run:disabled { opacity:.5; cursor:wait }
+  button.secondary { background:#334155; color:var(--fg) }
+  button.secondary:hover { background:#475569 }
+  .warn { background:#7c2d12; color:#fed7aa; padding:8px 12px; border-radius:4px; border-left:3px solid #f97316; font-size:12px; margin-bottom:10px }
+  .sched-card { background:var(--panel); padding:12px 14px; border-radius:6px; margin-bottom:10px; border-left:3px solid var(--muted) }
+  .sched-card.on { border-left-color:var(--green) }
+  .sched-card.err { border-left-color:var(--red) }
+  .sched-card.disabled { opacity:.55 }
+  .sched-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap }
+  .sched-head h4 { margin:0; flex:1 }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; background:#334155; color:#e2e8f0 }
+  .badge.s3 { background:#7c3aed; color:#fff }
+  .badge.http { background:#0891b2; color:#fff }
+  .badge.mtr { background:#f59e0b; color:#020617 }
+  .badge.tcp { background:#dc2626; color:#fff }
+  .badge.ok { background:var(--green); color:#020617 }
+  .badge.err { background:var(--red); color:#fff }
+  .badge.off { background:#475569 }
+  .sched-meta { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:6px; margin-top:8px; font-size:11px; color:var(--muted) }
+  .sched-meta strong { display:block; color:var(--fg); font-size:13px; margin-top:1px; font-variant-numeric:tabular-nums }
+  .sched-actions { margin-top:10px; display:flex; gap:6px; flex-wrap:wrap }
+  .sched-actions button { padding:5px 10px; font-size:12px; background:#0b1220; color:var(--fg); border:1px solid #334155; border-radius:4px; cursor:pointer }
+  .sched-actions button:hover { border-color:var(--accent) }
+  .sched-actions button.danger { color:#fca5a5 }
+  .sched-actions button.danger:hover { background:var(--red); color:#fff; border-color:var(--red) }
+  .op-tabs { display:flex; gap:3px; margin:8px 0 12px 0 }
+  .op-tabs button { flex:1; padding:6px; background:#0b1220; border:1px solid #334155; color:var(--fg); cursor:pointer; border-radius:3px; font-size:11px; font-weight:600; text-transform:uppercase }
+  .op-tabs button.active { background:var(--accent); color:#020617; border-color:var(--accent) }
+  .help { font-size:11px; color:var(--muted); margin-top:3px }
+  details summary { cursor:pointer; color:var(--accent); font-size:12px; margin:6px 0 }
+  .empty { padding:30px; text-align:center; color:var(--muted) }
+  .last-status { font-family:monospace; font-size:11px; color:var(--muted) }
+  #toast-area { position:fixed; top:20px; right:20px; z-index:9999; display:flex; flex-direction:column; gap:8px; max-width:380px }
+  .toast { background:var(--panel); border-left:4px solid var(--accent); padding:10px 14px; border-radius:4px; box-shadow:0 4px 16px rgba(0,0,0,.4); animation:slideIn .2s ease-out; font-size:13px }
+  .toast.ok { border-left-color:var(--green) }
+  .toast.warn { border-left-color:var(--yellow) }
+  .toast.err { border-left-color:var(--red) }
+  .toast.fade { animation:fadeOut .3s ease-in forwards }
+  @keyframes slideIn { from { transform:translateX(100%); opacity:0 } to { transform:translateX(0); opacity:1 } }
+  @keyframes fadeOut { to { opacity:0; transform:translateX(20%) } }
+</style>
+<div id="toast-area"></div>
+
+<h2>Schedules — tests automatiques</h2>
+
+<div class="warn">
+  ⚠ Les schedules sont stockés dans la DB avec leurs credentials en clair (nécessaire pour l'exécution automatique). N'expose pas ce serveur sans auth devant. Pour la prod, monter les credentials via env (variable et binding) et utiliser des creds dédiés à l'usage.
+</div>
+
+<div class="sched-grid">
+
+  <!-- LEFT: list of schedules -->
+  <div>
+    <div id="sched-list">
+      <div class="empty">Chargement…</div>
+    </div>
+  </div>
+
+  <!-- RIGHT: editor -->
+  <div>
+    <fieldset>
+      <legend id="form-title">Nouveau schedule</legend>
+
+      <input type="hidden" id="sched-id">
+
+      <label class="row">Nom
+        <input id="sched-name" placeholder="ex: list-bucket-prod, monitor-s3-fr-mar">
+      </label>
+
+      <label class="row">Type
+        <select id="sched-kind">
+          <option value="s3">S3 (LIST/HEAD/GET/PUT/DELETE)</option>
+          <option value="http">HTTP probe (DNS/TCP/TLS/TTFB)</option>
+          <option value="mtr">MTR (chemin réseau)</option>
+          <option value="tcp">TCP stats (retransmissions kernel)</option>
+        </select>
+      </label>
+
+      <fieldset id="s3-fields">
+        <legend>Config S3</legend>
+        <label class="row">Endpoint URL
+          <input id="s3-endpoint" placeholder="https://s3.eu-west-3.amazonaws.com">
+        </label>
+        <label class="row">Région
+          <input id="s3-region" value="us-east-1">
+        </label>
+        <label class="row">Access Key
+          <input id="s3-access-key">
+        </label>
+        <label class="row">Secret Key
+          <input id="s3-secret-key" type="password">
+        </label>
+        <label class="row">Bucket
+          <input id="s3-bucket">
+        </label>
+        <label style="display:block; margin:8px 0; font-size:13px">
+          <input type="checkbox" id="s3-random-ops">
+          🎲 Opérations aléatoires (vision globale : LIST/HEAD/GET/PUT/DELETE alternés)
+        </label>
+        <div id="s3-random-fields" style="display:none; padding:10px; background:#020617; border-radius:4px; margin-bottom:8px; border-left:3px solid #f59e0b">
+          <div style="font-size:11px; color:#fed7aa; margin-bottom:8px">
+            ⚠ Sécurité : <strong>seuls les objets PUT par mtrgraph seront supprimés</strong>. Tous les PUT sont créés sous le prefix ci-dessous et tracés en base. Aucun objet utilisateur pré-existant ne sera touché.
+          </div>
+          <label class="row">Prefix (obligatoire en mode aléatoire)
+            <input id="s3-random-prefix" placeholder="mtrgraph-bench/" value="mtrgraph-bench/">
+            <div class="help">Tous les PUT vont sous ce prefix. LIST est scopé à ce prefix.</div>
+          </label>
+          <label class="row">Taille objets PUT (Kio)
+            <input id="s3-random-size" type="number" value="10" min="1" max="5000">
+          </label>
+          <label class="row">Pool min / max
+            <div class="inline">
+              <input id="s3-random-min" type="number" value="5" min="1" title="garde au moins N objets (sinon favorise PUT)">
+              <input id="s3-random-max" type="number" value="100" min="2" title="au-delà favorise DELETE pour drainer">
+            </div>
+            <div class="help">En dessous du min : PUT prioritaire. Au-dessus du max : DELETE prioritaire. Entre les deux : distribution équilibrée.</div>
+          </label>
+        </div>
+        <label class="row" id="s3-op-label">Opération
+          <div class="op-tabs">
+            <button type="button" data-op="list" class="active">LIST</button>
+            <button type="button" data-op="head">HEAD</button>
+            <button type="button" data-op="get">GET</button>
+            <button type="button" data-op="put">PUT</button>
+            <button type="button" data-op="delete">DELETE</button>
+          </div>
+        </label>
+        <label class="row" id="s3-key-row">Key
+          <input id="s3-key" placeholder="path/to/object (ou avec {ts} pour PUT)">
+          <div class="help">Pour PUT, <code>{ts}</code> sera remplacé par le timestamp à chaque run.</div>
+        </label>
+        <label class="row" id="s3-pool-row">Pool de keys aléatoires (HEAD/GET/DELETE)
+          <textarea id="s3-keys-pool" placeholder="une key par ligne (laisser vide pour utiliser Key ci-dessus)"></textarea>
+          <div class="help">Si renseigné, le scheduler pioche une key au hasard à chaque exécution.</div>
+        </label>
+        <label class="row" id="s3-prefix-row">Prefix (LIST)
+          <input id="s3-prefix">
+        </label>
+        <label class="row" id="s3-max-keys-row">Max keys (LIST)
+          <input id="s3-max-keys" type="number" value="1000">
+        </label>
+        <label class="row" id="s3-body-row" style="display:none">Body (PUT) — taille Kio
+          <input id="s3-body-size" type="number" placeholder="ex: 10">
+        </label>
+        <label style="display:block; margin:8px 0; font-size:13px">
+          <input type="checkbox" id="s3-auto-compare">
+          Comparer automatiquement à la baseline (alerte si dégradation)
+        </label>
+        <label style="display:block; margin:8px 0; font-size:13px">
+          <input type="checkbox" id="s3-auto-mtr" checked>
+          🌐 Auto-MTR vers l'IP résolue (alimente la courbe RTT du dashboard)
+        </label>
+        <label class="row" id="s3-baseline-row">Taille fenêtre baseline (nb runs)
+          <input id="s3-baseline-n" type="number" value="10" min="3">
+          <div class="help">Médiane par étape (DNS/TCP/TLS/TTFB/Total) sur les N derniers runs (mêmes endpoint+op+bucket).</div>
+        </label>
+      </fieldset>
+
+      <fieldset id="http-fields" style="display:none">
+        <legend>Config HTTP</legend>
+        <label class="row">URL
+          <input id="http-url" placeholder="https://api.example.com/health">
+        </label>
+        <label class="row">Méthode
+          <select id="http-method"><option>HEAD</option><option>GET</option></select>
+        </label>
+        <label class="row">Samples par run
+          <input id="http-count" type="number" value="5" min="1" max="100">
+        </label>
+        <label class="row">IP forcée (optionnel)
+          <input id="http-ip" placeholder="ex: 88.212.152.165">
+        </label>
+      </fieldset>
+
+      <fieldset id="tcp-fields" style="display:none">
+        <legend>Config TCP stats</legend>
+        <div class="help" style="margin-bottom:10px">
+          Échantillonne <code>/proc/net/snmp</code> (compteurs kernel TCP) pour mesurer le taux de retransmissions.
+          ⚠ En container sans <code>hostNetwork</code>, mesure le namespace du pod, pas l'host.
+        </div>
+        <label class="row">Durée du sample (secondes)
+          <input id="tcp-duration" type="number" value="5" min="1" max="60">
+          <div class="help">Plus c'est long, plus la mesure est précise mais moins réactive.</div>
+        </label>
+      </fieldset>
+
+      <fieldset id="mtr-fields" style="display:none">
+        <legend>Config MTR</legend>
+        <label class="row">Cible
+          <input id="mtr-target" placeholder="8.8.8.8 ou hostname">
+          <div class="help">Ignoré si un pool aléatoire est défini ci-dessous.</div>
+        </label>
+        <label class="row">Pool de cibles aléatoires (optionnel)
+          <textarea id="mtr-targets-pool" placeholder="une IP ou hostname par ligne"></textarea>
+          <div class="help">À chaque run, une cible est piochée au hasard. Chaque cible a sa propre baseline pour la comparaison.</div>
+        </label>
+        <label class="row">Protocole
+          <select id="mtr-proto">
+            <option value="icmp">ICMP (requiert CAP_NET_RAW)</option>
+            <option value="udp">UDP (par défaut, sans privilège)</option>
+            <option value="tcp" selected>TCP (requiert CAP_NET_RAW)</option>
+          </select>
+        </label>
+        <label class="row" id="mtr-port-row">Port (UDP/TCP)
+          <input id="mtr-port" type="number" value="443" min="1" max="65535">
+        </label>
+        <label class="row">Durée du run (secondes)
+          <input id="mtr-duration" type="number" value="30" min="3">
+          <div class="help">≈ nombre de cycles mtr (1 cycle/seconde). 30s = bon compromis stats/charge.</div>
+        </label>
+        <label style="display:block; margin:8px 0; font-size:13px">
+          <input type="checkbox" id="mtr-auto-compare" checked>
+          Comparer automatiquement à la baseline et alerter si dégradation
+        </label>
+        <label class="row" id="mtr-baseline-row">Taille fenêtre baseline (nb runs)
+          <input id="mtr-baseline-n" type="number" value="10" min="2">
+          <div class="help">Médiane par hop sur les N derniers runs du même (cible, proto, port).</div>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Planification</legend>
+        <label class="row">Mode
+          <select id="sched-mode">
+            <option value="fixed">Intervalle fixe</option>
+            <option value="random">Intervalle aléatoire</option>
+          </select>
+        </label>
+        <label class="row" id="fixed-row">Intervalle (secondes)
+          <input id="sched-interval" type="number" value="60" min="5">
+        </label>
+        <label class="row" id="random-row" style="display:none">Intervalle aléatoire entre…
+          <div class="inline">
+            <input id="sched-min" type="number" placeholder="min sec" value="30">
+            <input id="sched-max" type="number" placeholder="max sec" value="300">
+          </div>
+          <div class="help">À chaque run, le prochain délai est tiré uniformément entre min et max.</div>
+        </label>
+      </fieldset>
+
+      <label class="row">Label (optionnel)
+        <input id="sched-label" placeholder="ex: k8s-prod, monitoring">
+      </label>
+
+      <label class="row">Webhook URL (optionnel)
+        <input id="sched-webhook" placeholder="https://hooks.slack.com/services/… ou tout endpoint POST JSON">
+        <div class="help">POSTé avec <code>{text, severity, status, run_id, schedule_id, schedule_name, kind}</code> dès qu'un run produit un statut <code>warning</code>, <code>critical</code>, <code>err:*</code> ou <code>http:4xx/5xx</code>. Compatible Slack/Teams/generic.</div>
+      </label>
+
+      <label style="display:block; margin:8px 0; font-size:13px;">
+        <input type="checkbox" id="sched-enabled" checked> Activé immédiatement
+      </label>
+
+      <button type="button" class="run" id="save-btn">Créer le schedule</button>
+      <button type="button" class="run secondary" id="cancel-btn" style="display:none">Annuler l'édition</button>
+    </fieldset>
+  </div>
+</div>
+
+<script>
+let editingId = null;
+let currentKind = 's3';
+let currentOp = 'list';
+
+function setKind(k) {
+  currentKind = k;
+  document.getElementById('sched-kind').value = k;
+  document.getElementById('s3-fields').style.display = (k === 's3') ? 'block' : 'none';
+  document.getElementById('http-fields').style.display = (k === 'http') ? 'block' : 'none';
+  document.getElementById('mtr-fields').style.display = (k === 'mtr') ? 'block' : 'none';
+  document.getElementById('tcp-fields').style.display = (k === 'tcp') ? 'block' : 'none';
+}
+function setOp(op) {
+  currentOp = op;
+  document.querySelectorAll('#s3-fields .op-tabs button').forEach(b => b.classList.toggle('active', b.dataset.op === op));
+  document.getElementById('s3-key-row').style.display = (op === 'list') ? 'none' : 'block';
+  document.getElementById('s3-pool-row').style.display = (['head','get','delete'].includes(op)) ? 'block' : 'none';
+  document.getElementById('s3-prefix-row').style.display = (op === 'list') ? 'block' : 'none';
+  document.getElementById('s3-max-keys-row').style.display = (op === 'list') ? 'block' : 'none';
+  document.getElementById('s3-body-row').style.display = (op === 'put') ? 'block' : 'none';
+}
+function setMode(m) {
+  document.getElementById('fixed-row').style.display = (m === 'fixed') ? 'block' : 'none';
+  document.getElementById('random-row').style.display = (m === 'random') ? 'block' : 'none';
+}
+
+document.getElementById('sched-kind').addEventListener('change', e => setKind(e.target.value));
+document.querySelectorAll('#s3-fields .op-tabs button').forEach(b => b.addEventListener('click', () => setOp(b.dataset.op)));
+document.getElementById('sched-mode').addEventListener('change', e => setMode(e.target.value));
+
+function syncRandomOps() {
+  const on = document.getElementById('s3-random-ops').checked;
+  document.getElementById('s3-random-fields').style.display = on ? 'block' : 'none';
+  // Hide single-op fields when random_ops is on (key/prefix/max_keys/op-tabs)
+  document.getElementById('s3-op-label').style.display = on ? 'none' : 'block';
+  if (on) {
+    // In random mode, individual op-specific rows are hidden — driven by op selector
+    document.getElementById('s3-key-row').style.display = 'none';
+    document.getElementById('s3-pool-row').style.display = 'none';
+    document.getElementById('s3-prefix-row').style.display = 'none';
+    document.getElementById('s3-max-keys-row').style.display = 'none';
+    document.getElementById('s3-body-row').style.display = 'none';
+  } else {
+    setOp(currentOp);
+  }
+}
+document.getElementById('s3-random-ops').addEventListener('change', syncRandomOps);
+
+function buildPayload() {
+  const kind = document.getElementById('sched-kind').value;
+  const mode = document.getElementById('sched-mode').value;
+  let config = {};
+  if (kind === 's3') {
+    const randomOps = document.getElementById('s3-random-ops').checked;
+    config = {
+      endpoint: document.getElementById('s3-endpoint').value.trim(),
+      region: document.getElementById('s3-region').value.trim() || 'us-east-1',
+      access_key: document.getElementById('s3-access-key').value.trim(),
+      secret_key: document.getElementById('s3-secret-key').value.trim(),
+      bucket: document.getElementById('s3-bucket').value.trim(),
+      operation: randomOps ? 'list' : currentOp,   // placeholder; ignored when random_ops
+    };
+    if (randomOps) {
+      const px = document.getElementById('s3-random-prefix').value.trim() || 'mtrgraph-bench/';
+      config.random_ops = true;
+      config.prefix = px.endsWith('/') ? px : px + '/';
+      config.object_size_kb = parseInt(document.getElementById('s3-random-size').value || '10');
+      config.min_pool_size = parseInt(document.getElementById('s3-random-min').value || '5');
+      config.max_pool_size = parseInt(document.getElementById('s3-random-max').value || '100');
+    } else {
+      if (currentOp === 'list') {
+        config.prefix = document.getElementById('s3-prefix').value;
+        config.max_keys = parseInt(document.getElementById('s3-max-keys').value || '1000');
+      } else {
+        config.key = document.getElementById('s3-key').value.trim() || null;
+        const pool = document.getElementById('s3-keys-pool').value.split('\n').map(s => s.trim()).filter(Boolean);
+        if (pool.length) config.keys_pool = pool;
+      }
+      if (currentOp === 'put') {
+        const sz = parseInt(document.getElementById('s3-body-size').value || '0');
+        if (sz > 0) config.body_size_kb = sz;
+      }
+    }
+    if (document.getElementById('s3-auto-compare').checked) {
+      config.auto_compare = true;
+      config.baseline_n = parseInt(document.getElementById('s3-baseline-n').value || '10');
+    }
+    config.auto_mtr = document.getElementById('s3-auto-mtr').checked;
+  } else if (kind === 'http') {
+    config = {
+      url: document.getElementById('http-url').value.trim(),
+      method: document.getElementById('http-method').value,
+      count: parseInt(document.getElementById('http-count').value || '5'),
+      ip: document.getElementById('http-ip').value.trim() || null,
+    };
+  } else if (kind === 'mtr') {
+    const pool = document.getElementById('mtr-targets-pool').value
+      .split('\n').map(s => s.trim()).filter(Boolean);
+    const proto = document.getElementById('mtr-proto').value;
+    config = {
+      target: document.getElementById('mtr-target').value.trim(),
+      proto: proto,
+      cycles: parseInt(document.getElementById('mtr-duration').value || '30'),
+      auto_compare: document.getElementById('mtr-auto-compare').checked,
+      baseline_n: parseInt(document.getElementById('mtr-baseline-n').value || '10'),
+    };
+    if (proto !== 'icmp') {
+      config.port = parseInt(document.getElementById('mtr-port').value || '443');
+    }
+    if (pool.length) config.targets_pool = pool;
+  } else if (kind === 'tcp') {
+    config = {
+      duration_s: parseFloat(document.getElementById('tcp-duration').value || '5'),
+    };
+  }
+  const label = document.getElementById('sched-label').value.trim();
+  if (label) config.label = label;
+  const payload = {
+    name: document.getElementById('sched-name').value.trim() || `${kind}-${Date.now()}`,
+    kind, config, schedule_mode: mode,
+    enabled: document.getElementById('sched-enabled').checked,
+  };
+  if (mode === 'fixed') {
+    payload.interval_s = parseInt(document.getElementById('sched-interval').value || '60');
+  } else {
+    payload.min_interval_s = parseInt(document.getElementById('sched-min').value || '30');
+    payload.max_interval_s = parseInt(document.getElementById('sched-max').value || '300');
+  }
+  const wh = document.getElementById('sched-webhook').value.trim();
+  if (wh) payload.webhook_url = wh;
+  return payload;
+}
+
+function fillForm(s) {
+  document.getElementById('sched-name').value = s.name;
+  setKind(s.kind);
+  document.getElementById('sched-mode').value = s.schedule_mode;
+  setMode(s.schedule_mode);
+  document.getElementById('sched-interval').value = s.interval_s || 60;
+  document.getElementById('sched-min').value = s.min_interval_s || 30;
+  document.getElementById('sched-max').value = s.max_interval_s || 300;
+  document.getElementById('sched-enabled').checked = !!s.enabled;
+  document.getElementById('sched-label').value = (s.config && s.config.label) || '';
+  document.getElementById('sched-webhook').value = s.webhook_url || '';
+  if (s.kind === 's3') {
+    const c = s.config || {};
+    document.getElementById('s3-endpoint').value = c.endpoint || '';
+    document.getElementById('s3-region').value = c.region || 'us-east-1';
+    document.getElementById('s3-access-key').value = c.access_key || '';
+    document.getElementById('s3-secret-key').value = c.secret_key || '';
+    document.getElementById('s3-bucket').value = c.bucket || '';
+    document.getElementById('s3-key').value = c.key || '';
+    document.getElementById('s3-keys-pool').value = (c.keys_pool || []).join('\n');
+    document.getElementById('s3-prefix').value = c.prefix || '';
+    document.getElementById('s3-max-keys').value = c.max_keys || 1000;
+    document.getElementById('s3-body-size').value = c.body_size_kb || '';
+    document.getElementById('s3-auto-compare').checked = !!c.auto_compare;
+    document.getElementById('s3-baseline-n').value = c.baseline_n || 10;
+    document.getElementById('s3-auto-mtr').checked = c.auto_mtr !== false;
+    document.getElementById('s3-random-ops').checked = !!c.random_ops;
+    if (c.random_ops) {
+      document.getElementById('s3-random-prefix').value = c.prefix || 'mtrgraph-bench/';
+      document.getElementById('s3-random-size').value = c.object_size_kb || 10;
+      document.getElementById('s3-random-min').value = c.min_pool_size || 5;
+      document.getElementById('s3-random-max').value = c.max_pool_size || 100;
+    }
+    setOp(c.operation || 'list');
+    syncRandomOps();
+  } else if (s.kind === 'http') {
+    const c = s.config || {};
+    document.getElementById('http-url').value = c.url || '';
+    document.getElementById('http-method').value = c.method || 'HEAD';
+    document.getElementById('http-count').value = c.count || 5;
+    document.getElementById('http-ip').value = c.ip || '';
+  } else if (s.kind === 'mtr') {
+    const c = s.config || {};
+    document.getElementById('mtr-target').value = c.target || '';
+    document.getElementById('mtr-targets-pool').value = (c.targets_pool || []).join('\n');
+    document.getElementById('mtr-proto').value = c.proto || 'tcp';
+    document.getElementById('mtr-port').value = c.port || 443;
+    document.getElementById('mtr-duration').value = c.cycles || 30;
+    document.getElementById('mtr-auto-compare').checked = c.auto_compare !== false;
+    document.getElementById('mtr-baseline-n').value = c.baseline_n || 10;
+  } else if (s.kind === 'tcp') {
+    const c = s.config || {};
+    document.getElementById('tcp-duration').value = c.duration_s || 5;
+  }
+}
+
+function clearForm() {
+  document.getElementById('sched-name').value = '';
+  document.getElementById('s3-endpoint').value = '';
+  document.getElementById('s3-access-key').value = '';
+  document.getElementById('s3-secret-key').value = '';
+  document.getElementById('s3-bucket').value = '';
+  document.getElementById('s3-key').value = '';
+  document.getElementById('s3-keys-pool').value = '';
+  document.getElementById('s3-prefix').value = '';
+  document.getElementById('s3-body-size').value = '';
+  document.getElementById('s3-auto-compare').checked = false;
+  document.getElementById('s3-random-ops').checked = false;
+  document.getElementById('s3-random-prefix').value = 'mtrgraph-bench/';
+  document.getElementById('s3-random-size').value = 10;
+  document.getElementById('s3-random-min').value = 5;
+  document.getElementById('s3-random-max').value = 100;
+  syncRandomOps();
+  document.getElementById('http-url').value = '';
+  document.getElementById('http-ip').value = '';
+  document.getElementById('sched-label').value = '';
+  document.getElementById('sched-webhook').value = '';
+  editingId = null;
+  document.getElementById('form-title').textContent = 'Nouveau schedule';
+  document.getElementById('save-btn').textContent = 'Créer le schedule';
+  document.getElementById('cancel-btn').style.display = 'none';
+}
+
+document.getElementById('save-btn').addEventListener('click', async () => {
+  const payload = buildPayload();
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  try {
+    const url = editingId ? `/api/schedules/${editingId}` : '/api/schedules';
+    const method = editingId ? 'PUT' : 'POST';
+    const r = await fetch(url, { method, headers: {'content-type':'application/json'}, body: JSON.stringify(payload) });
+    if (!r.ok) { alert((await r.text())); return; }
+    clearForm();
+    reload();
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('cancel-btn').addEventListener('click', clearForm);
+
+function toast(msg, kind) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (kind || 'info');
+  el.textContent = msg;
+  document.getElementById('toast-area').appendChild(el);
+  setTimeout(() => { el.classList.add('fade'); setTimeout(() => el.remove(), 300); }, 4200);
+}
+async function toggle(id) {
+  await fetch(`/api/schedules/${id}/toggle`, {method:'POST'});
+  reload();
+}
+async function runNow(id) {
+  const r = await fetch(`/api/schedules/${id}/run-now`, {method:'POST'});
+  const j = await r.json();
+  if (r.ok) {
+    const s = j.last_status || '?';
+    const kind = s.startsWith('ok') ? 'ok' : (s.startsWith('warn') ? 'warn' : 'err');
+    toast(`Run #${j.last_run_id || '?'} → ${s}`, kind);
+  } else {
+    toast('Échec: ' + (j.detail || JSON.stringify(j)), 'err');
+  }
+  reload();
+}
+async function del(id) {
+  // Check if it's a S3 random_ops schedule with tracked objects
+  let purge = false;
+  try {
+    const t = await fetch(`/api/schedules/${id}/tracked`).then(r => r.json());
+    if (t.alive_count > 0) {
+      purge = confirm(
+        `Ce schedule a créé ${t.alive_count} objet(s) S3 (encore présents sur le bucket distant).\n\n` +
+        `OK = supprimer le schedule ET ces ${t.alive_count} objets (cleanup propre)\n` +
+        `Annuler = supprimer le schedule seulement (les objets resteront sur S3)\n\n` +
+        `(uniquement les objets PUT par mtrgraph sont concernés, jamais ceux des utilisateurs)`
+      );
+    } else if (!confirm(`Supprimer le schedule #${id} ?`)) {
+      return;
+    }
+  } catch (e) {
+    if (!confirm(`Supprimer le schedule #${id} ?`)) return;
+  }
+  const url = `/api/schedules/${id}` + (purge ? '?purge=true' : '');
+  const r = await fetch(url, {method:'DELETE'});
+  const j = await r.json();
+  if (j.purged_objects !== undefined && j.purged_objects > 0) {
+    toast(`Schedule #${id} supprimé · ${j.purged_objects} objet(s) purgé(s) du bucket`, 'ok');
+  } else {
+    toast(`Schedule #${id} supprimé`, 'ok');
+  }
+  reload();
+}
+async function purgeTracked(id) {
+  const t = await fetch(`/api/schedules/${id}/tracked`).then(r => r.json());
+  if (t.alive_count === 0) {
+    toast('Aucun objet à purger', 'info');
+    return;
+  }
+  if (!confirm(`Purger ${t.alive_count} objet(s) S3 créé(s) par ce schedule ?\n(le schedule lui-même reste actif)`)) return;
+  const r = await fetch(`/api/schedules/${id}/purge`, {method:'POST'});
+  const j = await r.json();
+  toast(`Purge: ${j.purged} OK · ${j.failed} erreur(s)`, j.failed ? 'warn' : 'ok');
+  reload();
+}
+async function edit(id) {
+  const all = await fetch('/api/schedules').then(r => r.json());
+  const s = all.find(x => x.id === id);
+  if (!s) return;
+  editingId = id;
+  fillForm(s);
+  document.getElementById('form-title').textContent = `Édition schedule #${id}`;
+  document.getElementById('save-btn').textContent = 'Enregistrer';
+  document.getElementById('cancel-btn').style.display = 'block';
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  return iso.replace('T', ' ').slice(5, 16);
+}
+function statusBadge(s) {
+  if (!s) return '<span class="badge">—</span>';
+  if (s.startsWith('ok')) return `<span class="badge ok">${s.slice(0, 20)}</span>`;
+  if (s.startsWith('err') || s.startsWith('http')) return `<span class="badge err">${s.slice(0, 30)}</span>`;
+  return `<span class="badge">${s.slice(0, 30)}</span>`;
+}
+
+async function reload() {
+  const rows = await fetch('/api/schedules').then(r => r.json());
+  const el = document.getElementById('sched-list');
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">Aucun schedule. Crée-en un avec le formulaire à droite.</div>';
+    return;
+  }
+  el.innerHTML = rows.map(s => {
+    const sched = s.schedule_mode === 'fixed'
+      ? `toutes les ${s.interval_s}s`
+      : `aléatoire ${s.min_interval_s}–${s.max_interval_s}s`;
+    let target;
+    if (s.kind === 's3') {
+      if (s.config.random_ops) {
+        target = `🎲 RANDOM-OPS ${s.config.bucket || ''}/${s.config.prefix || ''}  (pool ${s.config.min_pool_size}-${s.config.max_pool_size})`;
+      } else {
+        target = `${s.config.operation?.toUpperCase()} ${s.config.bucket || ''}${s.config.key ? '/' + s.config.key : ''}`;
+      }
+    } else if (s.kind === 'http') {
+      target = s.config.url;
+    } else if (s.kind === 'mtr') {
+      const t = (s.config.targets_pool && s.config.targets_pool.length)
+        ? `pool[${s.config.targets_pool.length}]: ${s.config.targets_pool.slice(0,3).join(', ')}${s.config.targets_pool.length>3 ? '…' : ''}`
+        : s.config.target;
+      const portInfo = s.config.proto === 'icmp' ? '' : `:${s.config.port || ''}`;
+      target = `${(s.config.proto || 'icmp').toUpperCase()}${portInfo} → ${t}  (${s.config.cycles}s${s.config.auto_compare ? ', vs baseline' : ''})`;
+    } else if (s.kind === 'tcp') {
+      target = `TCP /proc/net/snmp sample ${s.config.duration_s || 5}s`;
+    } else {
+      target = JSON.stringify(s.config).slice(0, 80);
+    }
+    let css = 'sched-card';
+    if (!s.enabled) css += ' disabled';
+    if (s.last_status && (s.last_status.startsWith('err') || s.last_status.startsWith('http:5'))) css += ' err';
+    else if (s.last_status && s.last_status.startsWith('ok')) css += ' on';
+    return `<div class="${css}">
+      <div class="sched-head">
+        <span class="badge ${s.kind}">${s.kind}</span>
+        <h4>${s.name}</h4>
+        ${s.enabled ? '' : '<span class="badge off">désactivé</span>'}
+        ${statusBadge(s.last_status)}
+      </div>
+      <div style="font-family:monospace; font-size:12px; margin-top:6px; color:var(--fg)">${target.replace(/</g,'&lt;')}</div>
+      <div class="sched-meta">
+        <div>Schedule<strong>${sched}</strong></div>
+        <div>Dernier run<strong>${fmtTime(s.last_run_at)}</strong></div>
+        <div>Prochain run<strong>${fmtTime(s.next_run_at)}</strong></div>
+        ${s.last_run_id ? `<div>Run ID<strong><a href="${s.kind === 's3' ? '/s3' : '/http/' + s.last_run_id}" style="color:var(--accent)">#${s.last_run_id}</a></strong></div>` : ''}
+      </div>
+      <div class="sched-actions">
+        <button onclick="runNow(${s.id})">▶ Run now</button>
+        <button onclick="toggle(${s.id})">${s.enabled ? '⏸ Désactiver' : '▶ Activer'}</button>
+        <button onclick="edit(${s.id})">✎ Éditer</button>
+        ${s.kind === 's3' && s.config.random_ops ? `<button onclick="purgeTracked(${s.id})" title="Supprimer les objets PUT par ce schedule">🧹 Purger</button>` : ''}
+        <button class="danger" onclick="del(${s.id})">🗑 Supprimer</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+setOp('list');
+setMode('fixed');
+reload();
+setInterval(reload, 5000);
+</script>
+{% endblock %}

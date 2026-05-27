@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Run #{{ run.id }} — {{ run.target }} <span class="pill" style="background:#334155;color:#e2e8f0;font-size:13px;vertical-align:middle">{{ run.proto_label }}</span></h2>
+<div class="meta">Démarré {{ run.started_at }} · cycles {{ run.cycles }} · source {{ run.src or '?' }} · label {{ run.label or '—' }}</div>
+
+<div class="grid2" style="margin-top:14px">
+  <div class="card"><canvas id="lat" height="200"></canvas></div>
+  <div class="card"><canvas id="loss" height="200"></canvas></div>
+</div>
+
+<div class="card legend">
+  <span><span class="sw" style="background:#16a34a"></span>OK</span>
+  <span><span class="sw" style="background:#eab308"></span>Attention</span>
+  <span><span class="sw" style="background:#dc2626"></span>Alerte</span>
+</div>
+
+<table>
+  <thead><tr>
+    <th>#</th><th>Host</th><th>Loss%</th><th>Snt</th>
+    <th>Last</th><th>Avg</th><th>Best</th><th>Wrst</th><th>StDev</th><th>Bar</th>
+  </tr></thead>
+  <tbody>
+  {% set max_avg = hops|map(attribute='avg_ms')|select|max if hops else 1 %}
+  {% for h in hops %}
+    {% set bar_w = ((h.avg_ms or 0) / (max_avg or 1) * 240)|round|int %}
+    <tr>
+      <td class="num">{{ h.hop_index }}</td>
+      <td>{{ h.host or '???' }}</td>
+      <td class="num"><span class="pill" style="background: {{ loss_hex(h.loss_pct) }}">{{ '%.1f' % h.loss_pct }}%</span></td>
+      <td class="num">{{ h.sent }}</td>
+      <td class="num">{{ '%.1f' % h.last_ms }}</td>
+      <td class="num" style="color: {{ latency_hex(h.avg_ms) }}; font-weight:600">{{ '%.1f' % h.avg_ms }}</td>
+      <td class="num">{{ '%.1f' % h.best_ms }}</td>
+      <td class="num">{{ '%.1f' % h.worst_ms }}</td>
+      <td class="num">{{ '%.1f' % h.stddev_ms }}</td>
+      <td><span class="bar" style="width:{{ bar_w }}px; background:{{ latency_hex(h.avg_ms) }}"></span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+const hops = {{ hops|tojson }};
+const labels = hops.map(h => `${h.hop_index} · ${h.host || '???'}`);
+const avg = hops.map(h => h.avg_ms);
+const best = hops.map(h => h.best_ms);
+const worst = hops.map(h => h.worst_ms);
+const loss = hops.map(h => h.loss_pct);
+
+new Chart(document.getElementById('lat'), {
+  type:'line', data:{ labels, datasets:[
+    { label:'Best', data: best, borderColor:'#22d3ee', tension:.2, fill:false },
+    { label:'Avg',  data: avg,  borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.2)', tension:.2, fill:true },
+    { label:'Worst', data: worst, borderColor:'#f472b6', tension:.2, fill:false },
+  ]},
+  options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'} }, x:{ ticks:{color:'#94a3b8'} } }, plugins:{legend:{labels:{color:'#e2e8f0'}}, title:{display:true,text:'Latence par hop', color:'#e2e8f0'} } }
+});
+new Chart(document.getElementById('loss'), {
+  type:'bar', data:{ labels, datasets:[{ label:'Loss %', data: loss, backgroundColor: loss.map(l => l>=10?'#b91c1c':l>=5?'#dc2626':l>=1?'#eab308':'#16a34a') }]},
+  options:{ responsive:true, scales:{ y:{ beginAtZero:true, max:100, ticks:{color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8'}}}, plugins:{legend:{labels:{color:'#e2e8f0'}}, title:{display:true,text:'Perte par hop (%)', color:'#e2e8f0'}}}
+});
+</script>
+{% endblock %}

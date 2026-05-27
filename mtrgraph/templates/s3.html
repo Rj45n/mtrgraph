@@ -1,0 +1,459 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .s3-grid { display:grid; grid-template-columns: 380px 1fr; gap:18px; align-items:start }
+  @media (max-width: 1000px) { .s3-grid { grid-template-columns: 1fr } }
+  fieldset { border:1px solid #334155; border-radius:6px; padding:12px 14px; margin:10px 0; background:#0b1220 }
+  legend { color:var(--accent); font-size:13px; padding:0 6px }
+  label.row { display:block; margin:8px 0; font-size:13px; color:var(--muted) }
+  label.row input, label.row select, label.row textarea { width:100%; margin-top:3px; padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-family:inherit; font-size:13px }
+  label.row input:focus, label.row select:focus { outline:none; border-color:var(--accent) }
+  .inline { display:flex; gap:8px }
+  .inline > * { flex:1 }
+  button.run { width:100%; padding:10px; background:var(--accent); color:#020617; border:none; border-radius:4px; font-weight:600; font-size:14px; cursor:pointer; margin-top:8px }
+  button.run:hover { background:#0ea5e9 }
+  button.run:disabled { opacity:.5; cursor:wait }
+  .warn { background:#7c2d12; color:#fed7aa; padding:8px 12px; border-radius:4px; border-left:3px solid #f97316; font-size:12px; margin-bottom:10px }
+  .res-card { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
+  .res-card h3 { margin:0 0 10px 0; color:var(--accent) }
+  .stages { display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:8px; margin-bottom:14px }
+  .stage { background:#0b1220; padding:10px; border-radius:4px; text-align:center; border-top:3px solid var(--muted) }
+  .stage .lab { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px }
+  .stage .val { font-size:22px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums }
+  .stage .unit { font-size:12px; color:var(--muted); margin-left:2px }
+  .status-pill { display:inline-block; padding:4px 12px; border-radius:14px; font-weight:600; font-size:13px }
+  .summary { background:#0b1220; padding:10px 12px; border-radius:4px; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:200px; overflow-y:auto }
+  .err { background:#7f1d1d; color:#fee2e2; padding:10px 12px; border-radius:4px; border-left:3px solid #dc2626; font-family:monospace; font-size:13px }
+  .op-tabs { display:flex; gap:4px; margin:8px 0 12px 0 }
+  .op-tabs button { flex:1; padding:8px; background:#0b1220; border:1px solid #334155; color:var(--fg); cursor:pointer; border-radius:4px; font-size:12px; font-weight:600; text-transform:uppercase }
+  .op-tabs button.active { background:var(--accent); color:#020617; border-color:var(--accent) }
+  .help { font-size:11px; color:var(--muted); margin-top:3px }
+  details { margin-top:8px }
+  summary { cursor:pointer; color:var(--accent); font-size:12px }
+  .hist-table { font-size:12px }
+  .hist-table td { padding:5px 8px }
+  .delete-btn { background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px }
+  .delete-btn:hover { color:var(--red) }
+  .filter-bar { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; padding:12px 14px; background:#0b1220; border-radius:6px; margin-bottom:12px }
+  .filter-bar > div { flex:1; min-width:160px }
+  .filter-bar select { width:100%; padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-size:13px }
+  .ip-table { font-size:12px; margin-top:8px }
+  .ip-table td.num { font-variant-numeric:tabular-nums }
+  .ip-bad { background:#7f1d1d !important; color:#fee2e2 }
+  .ip-warn { background:#7c2d12 !important; color:#fed7aa }
+  .ip-ok { background:#065f46 !important; color:#d1fae5 }
+</style>
+
+<h2>S3 testing</h2>
+
+<div class="warn">
+  ⚠ Les credentials saisis ici sont utilisés pour la requête puis oubliés côté serveur (jamais stockés en DB). En revanche, ce serveur web n'a aucune authentification — protège l'accès derrière un reverse proxy si tu es en multi-utilisateurs.
+</div>
+
+<div class="s3-grid">
+
+  <!-- Form -->
+  <div>
+    <fieldset>
+      <legend>Endpoint &amp; credentials</legend>
+      <label class="row">Endpoint URL
+        <input id="endpoint" list="endpoints-list" placeholder="https://s3.eu-west-3.amazonaws.com" autocomplete="off">
+        <datalist id="endpoints-list"></datalist>
+        <div class="help">Sans le bucket. AWS, MinIO, Scaleway, OVH, Cellar, Free Pro, etc.</div>
+      </label>
+      <label class="row">Région
+        <input id="region" value="us-east-1" autocomplete="off">
+        <div class="help">Souvent ignorée par les S3-compat, mais doit être renseignée.</div>
+      </label>
+      <label class="row">Access Key
+        <input id="access_key" type="text" autocomplete="off" placeholder="AKIA…">
+      </label>
+      <label class="row">Secret Key
+        <input id="secret_key" type="password" autocomplete="off">
+      </label>
+      <details>
+        <summary>+ session token (STS)</summary>
+        <label class="row">Session Token
+          <input id="session_token" type="password" autocomplete="off">
+        </label>
+      </details>
+      <details>
+        <summary>💾 mémoriser dans ce navigateur</summary>
+        <div class="help" style="margin:6px 0">Stocké en localStorage, jamais envoyé au serveur sauf pour la requête S3.</div>
+        <label style="font-size:12px"><input type="checkbox" id="remember"> Mémoriser endpoint + creds</label>
+      </details>
+    </fieldset>
+
+    <fieldset>
+      <legend>Opération</legend>
+      <div class="op-tabs">
+        <button type="button" data-op="list" class="active">LIST</button>
+        <button type="button" data-op="head">HEAD</button>
+        <button type="button" data-op="get">GET</button>
+        <button type="button" data-op="put">PUT</button>
+        <button type="button" data-op="delete">DELETE</button>
+      </div>
+      <label class="row">Bucket
+        <input id="bucket" list="buckets-list" autocomplete="off">
+        <datalist id="buckets-list"></datalist>
+      </label>
+      <label class="row" id="key-row">Key
+        <input id="key" placeholder="path/to/object" autocomplete="off">
+      </label>
+      <label class="row" id="prefix-row">Prefix
+        <input id="prefix" autocomplete="off">
+      </label>
+      <label class="row" id="max-keys-row">Max keys
+        <input id="max_keys" type="number" value="1000" min="1" max="10000">
+      </label>
+      <label class="row" id="put-row" style="display:none">Contenu à uploader
+        <div class="inline">
+          <input id="body_size_kb" type="number" placeholder="taille (Kio)" min="0">
+          <input id="content_type" value="application/octet-stream">
+        </div>
+        <div class="help">Si vide, texte court par défaut. Sinon, N×1024 octets aléatoires.</div>
+      </label>
+      <label class="row">Label
+        <input id="label" placeholder="ex: prod, before-fix, k8s-staging">
+      </label>
+      <button type="button" class="run" id="run-btn">Lancer le test</button>
+    </fieldset>
+  </div>
+
+  <!-- Right column -->
+  <div>
+    <div id="result-area"></div>
+
+    <!-- Time-series chart with filter -->
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Historique par étape (filtré)</h3>
+      <div class="filter-bar">
+        <div>
+          <label class="help">Endpoint</label>
+          <select id="f-endpoint"><option value="">— tous —</option></select>
+        </div>
+        <div>
+          <label class="help">Bucket</label>
+          <select id="f-bucket"><option value="">— tous —</option></select>
+        </div>
+        <div>
+          <label class="help">Opération</label>
+          <select id="f-operation"><option value="">— toutes —</option></select>
+        </div>
+        <div>
+          <label class="help">Vue chart</label>
+          <select id="f-view">
+            <option value="stages">Toutes étapes (DNS/TCP/TLS/TTFB/Total)</option>
+            <option value="per-ip">TTFB par IP résolue</option>
+            <option value="total-per-ip">Total par IP résolue</option>
+          </select>
+        </div>
+        <div style="flex:0">
+          <button type="button" id="refresh-btn" style="padding:7px 12px; background:#334155; color:var(--fg); border:none; border-radius:4px; cursor:pointer; font-size:13px">↻</button>
+        </div>
+      </div>
+      <canvas id="chart" height="100"></canvas>
+    </div>
+
+    <!-- Per-IP aggregate -->
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Statistiques par IP résolue (filtre identique)</h3>
+      <div id="ip-summary"><em style="color:var(--muted)">Charge…</em></div>
+    </div>
+
+    <!-- History table -->
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Historique récent (50 derniers, tous filtres confondus)</h3>
+      <table class="hist-table" id="hist-table">
+        <thead><tr><th>#</th><th>Quand</th><th>Op</th><th>Status</th><th>IP</th><th>Total ms</th><th>Cible</th><th>Résumé</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const HTTP_THRESHOLDS = {
+  dns: [20, 100, 300], tcp: [20, 100, 300], tls: [50, 200, 500],
+  ttfb: [100, 500, 1500], total: [200, 800, 2500],
+};
+function colorForStage(stage, v) {
+  if (v === null || v === undefined) return '#666';
+  const [g, y, r] = HTTP_THRESHOLDS[stage] || [50, 200, 500];
+  if (v >= r) return '#b91c1c';
+  if (v >= y) return '#dc2626';
+  if (v >= g) return '#eab308';
+  return '#16a34a';
+}
+function statusColor(s) {
+  if (!s) return '#dc2626';
+  if (s >= 200 && s < 300) return '#16a34a';
+  if (s >= 300 && s < 400) return '#22d3ee';
+  if (s >= 400 && s < 500) return '#eab308';
+  return '#dc2626';
+}
+
+let currentOp = 'list';
+function setOp(op) {
+  currentOp = op;
+  document.querySelectorAll('.op-tabs button').forEach(b => b.classList.toggle('active', b.dataset.op === op));
+  document.getElementById('key-row').style.display = (op === 'list') ? 'none' : 'block';
+  document.getElementById('prefix-row').style.display = (op === 'list') ? 'block' : 'none';
+  document.getElementById('max-keys-row').style.display = (op === 'list') ? 'block' : 'none';
+  document.getElementById('put-row').style.display = (op === 'put') ? 'block' : 'none';
+}
+document.querySelectorAll('.op-tabs button').forEach(b => b.addEventListener('click', () => setOp(b.dataset.op)));
+
+const STORE_KEY = 'mtrgraph-s3-creds';
+function loadRemembered() {
+  try {
+    const j = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    if (!j) return;
+    document.getElementById('remember').checked = true;
+    if (j.endpoint) document.getElementById('endpoint').value = j.endpoint;
+    if (j.region) document.getElementById('region').value = j.region;
+    if (j.access_key) document.getElementById('access_key').value = j.access_key;
+    if (j.secret_key) document.getElementById('secret_key').value = j.secret_key;
+    if (j.bucket) document.getElementById('bucket').value = j.bucket;
+  } catch (e) {}
+}
+function saveRemembered() {
+  if (document.getElementById('remember').checked) {
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      endpoint: document.getElementById('endpoint').value,
+      region: document.getElementById('region').value,
+      access_key: document.getElementById('access_key').value,
+      secret_key: document.getElementById('secret_key').value,
+      bucket: document.getElementById('bucket').value,
+    }));
+  } else {
+    localStorage.removeItem(STORE_KEY);
+  }
+}
+document.getElementById('remember').addEventListener('change', saveRemembered);
+loadRemembered();
+
+async function runTest() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true; btn.textContent = '…';
+  const payload = {
+    endpoint: document.getElementById('endpoint').value.trim(),
+    region: document.getElementById('region').value.trim() || 'us-east-1',
+    access_key: document.getElementById('access_key').value.trim(),
+    secret_key: document.getElementById('secret_key').value.trim(),
+    session_token: document.getElementById('session_token').value.trim() || null,
+    bucket: document.getElementById('bucket').value.trim(),
+    operation: currentOp,
+    key: document.getElementById('key').value.trim() || null,
+    prefix: document.getElementById('prefix').value.trim(),
+    max_keys: parseInt(document.getElementById('max_keys').value || '1000'),
+    content_type: document.getElementById('content_type').value || 'application/octet-stream',
+    body_size_kb: parseInt(document.getElementById('body_size_kb').value || '0') || null,
+    label: document.getElementById('label').value.trim() || null,
+  };
+  try {
+    const r = await fetch('/api/s3/test', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) showError(`HTTP ${r.status}: ${await r.text()}`);
+    else { showResult(await r.json()); saveRemembered(); reloadAll(); }
+  } catch (e) { showError(`fetch failed: ${e}`); }
+  finally { btn.disabled = false; btn.textContent = 'Lancer le test'; }
+}
+document.getElementById('run-btn').addEventListener('click', runTest);
+
+function showError(msg) {
+  document.getElementById('result-area').innerHTML =
+    `<div class="res-card"><div class="err">${msg.replace(/</g,'&lt;')}</div></div>`;
+}
+function stageCard(label, key, v) {
+  const c = colorForStage(key, v);
+  const txt = (v === null || v === undefined) ? '—' : v.toFixed(1);
+  return `<div class="stage" style="border-top-color:${c}">
+    <div class="lab">${label}</div>
+    <div class="val" style="color:${c}">${txt}<span class="unit">ms</span></div>
+  </div>`;
+}
+function showResult(r) {
+  const sc = statusColor(r.http_status);
+  document.getElementById('result-area').innerHTML = `
+    <div class="res-card">
+      <h3>Run #${r.run_id} · ${r.operation.toUpperCase()} · ${r.bucket || ''}${r.key ? '/' + r.key : ''}</h3>
+      <div style="margin-bottom:10px">
+        <span class="status-pill" style="background:${sc};color:#020617">${r.http_status || 'ERR'}</span>
+        &nbsp;<span style="color:var(--muted);font-size:12px">→ ${r.resolved_ip || '?'}</span>
+        ${r.bytes_transferred ? `&nbsp;<span style="color:var(--muted);font-size:12px">· ${r.bytes_transferred} bytes</span>` : ''}
+      </div>
+      <div class="stages">
+        ${stageCard('DNS','dns',r.dns_ms)}${stageCard('TCP','tcp',r.tcp_ms)}${stageCard('TLS','tls',r.tls_ms)}
+        ${stageCard('TTFB','ttfb',r.ttfb_ms)}${stageCard('TOTAL','total',r.duration_ms)}
+      </div>
+      ${r.response_summary ? `<div class="summary">${r.response_summary.replace(/</g,'&lt;')}</div>` : ''}
+      ${r.error ? `<div class="err" style="margin-top:10px">${r.error.replace(/</g,'&lt;')}</div>` : ''}
+    </div>`;
+}
+
+// ─── Filter / Chart / Per-IP ────────────────────────────────────────────
+let chart = null;
+const IP_COLORS = ['#38bdf8','#f472b6','#eab308','#22d3ee','#a78bfa','#fb923c','#34d399','#f87171'];
+
+async function loadFilters() {
+  const f = await fetch('/api/s3/filters').then(r => r.json());
+  function fill(id, items, current) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">— tous —</option>' +
+      items.map(v => `<option value="${v}" ${v === current ? 'selected' : ''}>${v}</option>`).join('');
+  }
+  const cur = currentFilter();
+  fill('f-endpoint', f.endpoints, cur.endpoint);
+  fill('f-bucket', f.buckets, cur.bucket);
+  fill('f-operation', f.operations, cur.operation);
+  document.getElementById('endpoints-list').innerHTML = f.endpoints.map(v => `<option value="${v}">`).join('');
+  document.getElementById('buckets-list').innerHTML = f.buckets.map(v => `<option value="${v}">`).join('');
+}
+function currentFilter() {
+  return {
+    endpoint: document.getElementById('f-endpoint').value || '',
+    bucket: document.getElementById('f-bucket').value || '',
+    operation: document.getElementById('f-operation').value || '',
+    view: document.getElementById('f-view').value || 'stages',
+  };
+}
+function qs(obj) {
+  const p = new URLSearchParams();
+  Object.entries(obj).forEach(([k, v]) => { if (v) p.set(k, v); });
+  return p.toString();
+}
+
+async function loadChart() {
+  const f = currentFilter();
+  const params = qs({endpoint: f.endpoint, bucket: f.bucket, operation: f.operation, limit: 200});
+  const rows = await fetch('/api/s3/history?' + params).then(r => r.json());
+  const labels = rows.map(r => r.started_at.replace('T', ' ').slice(5, 16));
+
+  let datasets;
+  if (f.view === 'stages') {
+    datasets = [
+      { label:'DNS',   data: rows.map(r => r.dns_ms),      borderColor:'#a78bfa', tension:.3, fill:false },
+      { label:'TCP',   data: rows.map(r => r.tcp_ms),      borderColor:'#22d3ee', tension:.3, fill:false },
+      { label:'TLS',   data: rows.map(r => r.tls_ms),      borderColor:'#f472b6', tension:.3, fill:false },
+      { label:'TTFB',  data: rows.map(r => r.ttfb_ms),     borderColor:'#eab308', tension:.3, fill:false },
+      { label:'Total', data: rows.map(r => r.duration_ms), borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.15)', tension:.3, fill:true },
+    ];
+  } else {
+    const ipKey = f.view === 'per-ip' ? 'ttfb_ms' : 'duration_ms';
+    const ips = [...new Set(rows.map(r => r.resolved_ip || '?'))];
+    datasets = ips.map((ip, i) => ({
+      label: ip,
+      data: rows.map(r => (r.resolved_ip || '?') === ip ? r[ipKey] : null),
+      borderColor: IP_COLORS[i % IP_COLORS.length],
+      backgroundColor: IP_COLORS[i % IP_COLORS.length] + '33',
+      tension: .3, spanGaps: true, fill: false,
+    }));
+  }
+
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('chart'), {
+    type:'line',
+    data:{ labels, datasets },
+    options:{
+      responsive:true,
+      scales:{
+        y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'}},
+        x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} }
+      },
+      plugins:{ legend:{labels:{color:'#e2e8f0'}}}
+    }
+  });
+}
+
+async function loadByIp() {
+  const f = currentFilter();
+  const params = qs({endpoint: f.endpoint, bucket: f.bucket, operation: f.operation, limit: 500});
+  const rows = await fetch('/api/s3/by-ip?' + params).then(r => r.json());
+  const el = document.getElementById('ip-summary');
+  if (!rows.length) {
+    el.innerHTML = '<em style="color:var(--muted)">Pas de données pour ce filtre. Lance un test ou crée un schedule.</em>';
+    return;
+  }
+  // Classify each IP relative to median total
+  const totals = rows.map(r => r.avg_total_ms).filter(v => v !== null);
+  totals.sort((a,b)=>a-b);
+  const median = totals.length ? totals[Math.floor(totals.length/2)] : null;
+  function rowClass(r) {
+    if (r.err_pct >= 10) return 'ip-bad';
+    if (median && r.avg_total_ms && r.avg_total_ms >= median * 2) return 'ip-bad';
+    if (median && r.avg_total_ms && r.avg_total_ms >= median * 1.5) return 'ip-warn';
+    return 'ip-ok';
+  }
+  el.innerHTML = `
+    <table class="ip-table">
+      <thead><tr>
+        <th>IP</th><th class="num">Runs</th><th class="num">Err %</th>
+        <th class="num">DNS</th><th class="num">TCP</th><th class="num">TLS</th>
+        <th class="num">TTFB</th><th class="num">Total</th>
+      </tr></thead>
+      <tbody>
+      ${rows.map(r => {
+        const cls = rowClass(r);
+        const fmt = v => v === null ? '—' : v.toFixed(1);
+        return `<tr class="${cls}">
+          <td style="font-family:monospace"><strong>${r.ip}</strong></td>
+          <td class="num">${r.count}</td>
+          <td class="num"><strong>${r.err_pct}%</strong></td>
+          <td class="num">${fmt(r.avg_dns_ms)}</td>
+          <td class="num">${fmt(r.avg_tcp_ms)}</td>
+          <td class="num">${fmt(r.avg_tls_ms)}</td>
+          <td class="num"><strong>${fmt(r.avg_ttfb_ms)}</strong></td>
+          <td class="num"><strong>${fmt(r.avg_total_ms)}</strong></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+    ${median ? `<div class="help" style="margin-top:8px">Code couleur : vert si Total ≤ médiane (${median.toFixed(0)}ms), orange si ≥ 1.5×, rouge si ≥ 2× ou si erreurs ≥ 10%.</div>` : ''}
+  `;
+}
+
+async function reloadHistory() {
+  const r = await fetch('/api/s3/runs?limit=50');
+  const rows = await r.json();
+  const tb = document.querySelector('#hist-table tbody');
+  tb.innerHTML = rows.map(row => {
+    const sc = statusColor(row.http_status);
+    const target = `${row.bucket || ''}${row.key ? '/' + row.key : ''}`;
+    const dur = row.duration_ms !== null ? row.duration_ms.toFixed(0) + ' ms' : '—';
+    return `<tr>
+      <td>${row.id}</td>
+      <td style="color:var(--muted)">${row.started_at.slice(5, 16).replace('T', ' ')}</td>
+      <td><strong>${row.operation.toUpperCase()}</strong></td>
+      <td><span class="status-pill" style="background:${sc};color:#020617;font-size:11px;padding:2px 8px">${row.http_status || 'ERR'}</span></td>
+      <td style="font-family:monospace; font-size:11px">${row.resolved_ip || '?'}</td>
+      <td class="num" style="color:${colorForStage('total', row.duration_ms)}">${dur}</td>
+      <td>${target}</td>
+      <td style="font-size:11px;color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(row.response_summary || row.error || '').replace(/"/g, '&quot;')}">${row.response_summary || row.error || ''}</td>
+      <td><button class="delete-btn" onclick="deleteRun(${row.id})" title="Supprimer">×</button></td>
+    </tr>`;
+  }).join('');
+}
+async function deleteRun(id) {
+  if (!confirm(`Supprimer le run #${id} ?`)) return;
+  await fetch('/api/s3/runs/' + id, { method:'DELETE' });
+  reloadAll();
+}
+
+async function reloadAll() {
+  await loadFilters();
+  await Promise.all([loadChart(), loadByIp(), reloadHistory()]);
+}
+
+['f-endpoint','f-bucket','f-operation','f-view'].forEach(id =>
+  document.getElementById(id).addEventListener('change', () => { loadChart(); loadByIp(); })
+);
+document.getElementById('refresh-btn').addEventListener('click', reloadAll);
+
+setOp('list');
+reloadAll();
+setInterval(reloadAll, 10000);
+</script>
+{% endblock %}

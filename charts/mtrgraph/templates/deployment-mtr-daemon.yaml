@@ -1,0 +1,61 @@
+{{- if .Values.mtrDaemon.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mtrgraph.fullname" . }}-mtr-daemon
+  labels:
+    {{- include "mtrgraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mtr-daemon
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "mtrgraph.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mtr-daemon
+  template:
+    metadata:
+      labels:
+        {{- include "mtrgraph.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mtr-daemon
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: mtr-daemon
+          image: {{ include "mtrgraph.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "mtrgraph.cli"]
+          args:
+            - "daemon"
+            - {{ .Values.mtrDaemon.target | quote }}
+            - "--proto"
+            - {{ .Values.mtrDaemon.proto | quote }}
+            - "--port"
+            - {{ .Values.mtrDaemon.port | quote }}
+            - "--every"
+            - {{ .Values.mtrDaemon.intervalSeconds | quote }}
+            - "-c"
+            - {{ .Values.mtrDaemon.cycles | quote }}
+            - "--db"
+            - "/data/mtrgraph.db"
+            - "--label"
+            - "helm-mtr"
+          securityContext:
+            capabilities:
+              add: ["NET_RAW"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mtrgraph.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

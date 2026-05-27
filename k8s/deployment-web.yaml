@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mtrgraph-web
+  namespace: mtrgraph
+  labels:
+    app: mtrgraph
+    role: web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # même PVC RWO partagé avec les daemons
+  selector:
+    matchLabels:
+      app: mtrgraph
+      role: web
+  template:
+    metadata:
+      labels:
+        app: mtrgraph
+        role: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: web
+          image: mtrgraph:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Retention DB : age max des lignes (cf docs/retention.md)
+            - name: MTRGRAPH_RETENTION_DAYS
+              value: "30"
+            - name: MTRGRAPH_RETENTION_PERIOD_HOURS
+              value: "24"
+          # envFrom credentials S3 : décommente si tu utilises l'UI /s3 dans le pod
+          # envFrom:
+          #   - secretRef:
+          #       name: mtrgraph-s3-creds
+          command: ["python", "-m", "mtrgraph.cli"]
+          args:
+            - "web"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8765"
+            - "--db"
+            - "/data/mtrgraph.db"
+          ports:
+            - name: http
+              containerPort: 8765
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8765
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8765
+            initialDelaySeconds: 15
+            periodSeconds: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mtrgraph-data

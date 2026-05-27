@@ -1,0 +1,43 @@
+# Claude assistant
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# SQLite (DBs persistantes, jamais dans le repo)
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Local data dir (when running with --db /data/...)
+data/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+build/
+*.tar.gz
+*.whl
+
+# Logs et output temporaire
+*.log

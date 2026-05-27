@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Runs enregistrés</h2>
+
+<form method="get" action="/" class="card">
+  <label>Filtrer par cible
+    <select name="target" onchange="this.form.submit()">
+      <option value="">— toutes —</option>
+      {% set seen = [] %}
+      {% for s in scopes %}
+        {% if s.target not in seen %}{% set _ = seen.append(s.target) %}
+        <option value="{{ s.target }}" {% if s.target == current_target %}selected{% endif %}>{{ s.target }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+  </label>
+  {% if current_target %}
+    <label>Scope (proto:port)
+      <select name="proto_port" onchange="redirectScope(this)">
+        <option value="">— tous —</option>
+        {% for s in scopes if s.target == current_target %}
+          {% set sel = (s.protocol == current_proto and s.dst_port|default(none) == current_port) %}
+          <option value="{{ s.protocol }}|{{ s.dst_port or '' }}" {% if sel %}selected{% endif %}>
+            {{ s.proto_label }} ({{ s.n }} runs)
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <script>
+      function redirectScope(sel) {
+        const v = sel.value;
+        if (!v) { window.location = "/?target={{ current_target }}"; return; }
+        const [p, port] = v.split("|");
+        const q = new URLSearchParams({ target: "{{ current_target }}", proto: p });
+        if (port) q.set("port", port);
+        window.location = "/?" + q.toString();
+      }
+    </script>
+  {% endif %}
+</form>
+
+{% if current_target and current_proto %}
+<div class="card">
+  <h3 style="margin-top:0">Historique destination — {{ current_target }} [{{ current_proto }}{% if current_port %}:{{ current_port }}{% endif %}]</h3>
+  <canvas id="history" height="80"></canvas>
+</div>
+<script>
+{% set port_q = ("&port=" ~ current_port) if current_port else "" %}
+fetch("/api/target/{{ current_target }}/history?proto={{ current_proto }}{{ port_q }}").then(r => r.json()).then(rows => {
+  const labels = rows.map(r => r.started_at.replace('T',' ').slice(5,16));
+  const avg = rows.map(r => r.dst_avg_ms);
+  const loss = rows.map(r => r.dst_loss_pct);
+  new Chart(document.getElementById('history'), {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Avg ms (dst)', data: avg, borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.15)', tension:.3, yAxisID:'y' },
+      { label:'Loss %',       data: loss, borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.15)', tension:.3, yAxisID:'y1' },
+    ]},
+    options:{ responsive:true, interaction:{mode:'index'}, scales:{
+      y:{ position:'left', title:{display:true,text:'ms', color:'#94a3b8'}, ticks:{color:'#94a3b8'} },
+      y1:{ position:'right', title:{display:true,text:'%', color:'#94a3b8'}, ticks:{color:'#94a3b8'}, grid:{drawOnChartArea:false} },
+      x:{ ticks:{color:'#94a3b8'} }
+    }, plugins:{ legend:{labels:{color:'#e2e8f0'}}}}
+  });
+});
+</script>
+{% endif %}
+
+<form method="get" action="/compare" class="card">
+  Comparer
+  <select name="a">{% for r in runs %}<option value="{{ r.id }}">#{{ r.id }} — {{ r.target }} [{{ r.proto_label }}] — {{ r.started_at }}</option>{% endfor %}</select>
+  →
+  <select name="b">{% for r in runs %}<option value="{{ r.id }}">#{{ r.id }} — {{ r.target }} [{{ r.proto_label }}] — {{ r.started_at }}</option>{% endfor %}</select>
+  <button type="submit">Diff</button>
+</form>
+
+<table>
+  <thead><tr><th>#</th><th>Cible</th><th>Proto</th><th>Label</th><th>Cycles</th><th>Début</th><th>Source</th><th></th></tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td class="num">{{ r.id }}</td>
+      <td><a href="/?target={{ r.target }}" style="color:var(--accent)">{{ r.target }}</a></td>
+      <td><span class="pill" style="background:#334155;color:#e2e8f0">{{ r.proto_label }}</span></td>
+      <td>{{ r.label or '' }}</td>
+      <td class="num">{{ r.cycles }}</td>
+      <td>{{ r.started_at }}</td>
+      <td class="meta">{{ r.src or '' }}</td>
+      <td><a href="/run/{{ r.id }}" style="color:var(--accent)">détail</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

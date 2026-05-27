@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mtrgraph-http-daemon
+  namespace: mtrgraph
+  labels:
+    app: mtrgraph
+    role: http-daemon
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # SQLite n'aime pas 2 writers — pas de rolling
+  selector:
+    matchLabels:
+      app: mtrgraph
+      role: http-daemon
+  template:
+    metadata:
+      labels:
+        app: mtrgraph
+        role: http-daemon
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: http-daemon
+          image: mtrgraph:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: mtrgraph-config
+          # Le sleep+exec permet de loguer les paramètres pour debug
+          command: ["python", "-m", "mtrgraph.cli"]
+          args:
+            - "http-daemon"
+            - "$(TARGET_URL)"
+            - "--every"
+            - "$(INTERVAL)"
+            - "-c"
+            - "$(COUNT)"
+            - "-m"
+            - "$(METHOD)"
+            - "--baseline-n"
+            - "$(BASELINE_N)"
+            - "--error-threshold"
+            - "$(ERROR_THRESHOLD)"
+            - "--db"
+            - "/data/mtrgraph.db"
+            - "--label"
+            - "k8s"
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              # Le process écrit toutes les INTERVAL s ; si le fichier db n'a pas
+              # été modifié depuis 3× INTERVAL, on est probablement bloqué.
+              command:
+                - sh
+                - -c
+                - "test $(($(date +%s) - $(stat -c %Y /data/mtrgraph.db))) -lt $((${INTERVAL} * 3))"
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            failureThreshold: 2
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mtrgraph-data

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}mtrgraph{% endblock %}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --bg:#0f172a; --panel:#1e293b; --fg:#e2e8f0; --muted:#94a3b8;
+    --accent:#38bdf8; --green:#16a34a; --yellow:#eab308; --red:#dc2626;
+  }
+  * { box-sizing: border-box }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg) }
+  header { background:#020617; padding:14px 24px; display:flex; align-items:center; gap:24px; border-bottom:1px solid #334155 }
+  header h1 { margin:0; font-size:18px; color:var(--accent) }
+  header a { color:var(--fg); text-decoration:none; margin-right:14px }
+  header a:hover { color:var(--accent) }
+  main { padding:20px 24px; max-width:1400px; margin:0 auto }
+  h2 { color:var(--accent); border-bottom:1px solid #334155; padding-bottom:6px }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border-radius:6px; overflow:hidden }
+  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #334155 }
+  th { background:#0b1220; color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.5px }
+  tr:hover td { background:#243044 }
+  td.num { text-align:right; font-variant-numeric:tabular-nums }
+  .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; color:#0b1220 }
+  .bar { display:inline-block; height:10px; border-radius:2px; vertical-align:middle }
+  .delta-pos { color:var(--red) }
+  .delta-neg { color:#22d3ee }
+  .delta-zero { color:var(--muted) }
+  .verdict-ok { color:var(--green); font-weight:600 }
+  .verdict-warning { color:var(--yellow); font-weight:600 }
+  .verdict-critical { color:var(--red); font-weight:700 }
+  .card { background:var(--panel); padding:16px; border-radius:6px; margin-bottom:16px }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted) }
+  .legend span.sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle }
+  select, button, input { background:#0b1220; color:var(--fg); border:1px solid #334155; padding:6px 10px; border-radius:4px }
+  button { cursor:pointer }
+  button:hover { border-color:var(--accent) }
+  canvas { background:var(--panel); padding:10px; border-radius:6px }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px }
+  .meta { color:var(--muted); font-size:12px }
+</style>
+</head>
+<body>
+<header>
+  <h1>mtrgraph</h1>
+  <nav>
+    <a href="/dashboard"><strong>Dashboard</strong></a>
+    <a href="/">MTR runs</a>
+    <a href="/http">HTTP runs</a>
+    <a href="/s3">S3 testing</a>
+    <a href="/schedules">Schedules</a>
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

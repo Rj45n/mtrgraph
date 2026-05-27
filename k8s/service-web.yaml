@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mtrgraph-web
+  namespace: mtrgraph
+  labels:
+    app: mtrgraph
+    role: web
+spec:
+  type: ClusterIP             # passer en LoadBalancer si exposé direct (ATTENTION: pas d'auth)
+  selector:
+    app: mtrgraph
+    role: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

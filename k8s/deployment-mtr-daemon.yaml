@@ -1,0 +1,71 @@
+# Optional: deployment qui fait du MTR continu (couche réseau).
+# Si tu n'utilises que `http-daemon`, tu peux supprimer ce fichier.
+#
+# ⚠ ICMP et TCP SYN nécessitent CAP_NET_RAW. UDP fonctionne sans capabilities.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mtrgraph-mtr-daemon
+  namespace: mtrgraph
+  labels:
+    app: mtrgraph
+    role: mtr-daemon
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mtrgraph
+      role: mtr-daemon
+  template:
+    metadata:
+      labels:
+        app: mtrgraph
+        role: mtr-daemon
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: mtr-daemon
+          image: mtrgraph:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: mtrgraph-config
+          command: ["python", "-m", "mtrgraph.cli"]
+          args:
+            - "daemon"
+            - "$(MTR_TARGET)"
+            - "--proto"
+            - "$(MTR_PROTO)"
+            - "--port"
+            - "$(MTR_PORT)"
+            - "--every"
+            - "$(INTERVAL)"
+            - "-c"
+            - "$(MTR_CYCLES)"
+            - "--db"
+            - "/data/mtrgraph.db"
+            - "--label"
+            - "k8s-net"
+          securityContext:
+            capabilities:
+              add: ["NET_RAW"]      # nécessaire pour ICMP/TCP, retirer pour UDP only
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mtrgraph-data

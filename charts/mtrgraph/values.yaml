@@ -1,0 +1,90 @@
+# Default values for mtrgraph
+
+image:
+  repository: mtrgraph
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# How many web replicas. KEEP AT 1: SQLite is single-writer and the scheduler
+# thread runs inside the web pod. Use Postgres + external scheduler for HA.
+replicaCount: 1
+
+# Persistent storage for the SQLite DB (and tracked S3 objects)
+persistence:
+  enabled: true
+  size: 2Gi
+  # storageClassName: ""   # Use default storage class if unset
+  accessMode: ReadWriteOnce
+
+# Web UI
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8765
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: mtrgraph/web-basic-auth
+  hosts:
+    - host: mtrgraph.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: mtrgraph-tls
+    #   hosts: [mtrgraph.example.com]
+
+# Resources for the web pod
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Retention policy (see docs/retention.md)
+retention:
+  days: 30
+  periodHours: 24
+
+# Run as non-root (uid 10001 baked in the image)
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 0
+  fsGroup: 0
+
+# AWS / S3 credentials for the /s3 UI and S3 schedules.
+# When `enabled: true`, a Secret is created and injected as env vars.
+# RECOMMENDATION: in prod, create the Secret out-of-band (kubectl create secret,
+# SealedSecrets, External Secrets Operator, …) and reference it via existingSecret.
+s3Credentials:
+  enabled: false
+  # existingSecret: ""           # Use this Secret instead of creating one
+  accessKey: ""
+  secretKey: ""
+  sessionToken: ""
+
+# Optional: dedicated MTR daemon pod (requires CAP_NET_RAW for ICMP/TCP).
+# If you only use http-daemon and S3 schedules, leave disabled.
+mtrDaemon:
+  enabled: false
+  target: "8.8.8.8"
+  proto: tcp     # icmp | udp | tcp
+  port: "443"
+  cycles: "10"
+  intervalSeconds: 300
+
+# Optional: standalone HTTP-daemon pod (you can also create schedules from the UI).
+httpDaemon:
+  enabled: false
+  url: "https://example.com/"
+  intervalSeconds: 60
+  count: 5
+  method: HEAD
+  baselineN: 10
+  errorThresholdPct: 10

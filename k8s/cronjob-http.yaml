@@ -1,0 +1,57 @@
+# Alternative au Deployment + http-daemon : un CronJob qui lance un probe ponctuel.
+# Plus simple si tu veux juste un échantillon toutes les N minutes sans daemon persistent.
+# ⚠ Ne fait pas de comparaison à la baseline (utilise le Deployment pour ça).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mtrgraph-http-cron
+  namespace: mtrgraph
+spec:
+  schedule: "*/5 * * * *"           # toutes les 5 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 0
+            fsGroup: 0
+          containers:
+            - name: probe
+              image: mtrgraph:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: mtrgraph-config
+              command: ["python", "-m", "mtrgraph.cli"]
+              args:
+                - "http"
+                - "$(TARGET_URL)"
+                - "-c"
+                - "$(COUNT)"
+                - "-m"
+                - "$(METHOD)"
+                - "--db"
+                - "/data/mtrgraph.db"
+                - "--label"
+                - "cron"
+              resources:
+                requests:
+                  cpu: "20m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: mtrgraph-data

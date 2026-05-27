@@ -1,0 +1,213 @@
+"""HTTP timing probe — measures DNS / TCP / TLS / TTFB / total.
+
+Pure stdlib (no extra deps). One socket per sample, connection closed each time
+so we measure cold-start latency (which is what S3-style API clients pay).
+"""
+from __future__ import annotations
+
+import socket
+import ssl
+import time
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
+
+@dataclass
+class HttpSample:
+    sample_idx: int
+    dns_ms: float | None
+    tcp_ms: float | None
+    tls_ms: float | None
+    ttfb_ms: float | None
+    total_ms: float | None
+    status: int | None
+    resolved_ip: str | None
+    error: str | None
+
+
+def _ms(start: float) -> float:
+    return (time.monotonic() - start) * 1000.0
+
+
+def probe_once(
+    url: str,
+    method: str = "HEAD",
+    timeout: float = 10.0,
+    sample_idx: int = 0,
+    user_agent: str = "mtrgraph/0.1",
+    force_ip: str | None = None,
+) -> HttpSample:
+    """Single HTTP probe. Returns timings in milliseconds.
+
+    Connection is not reused — every call pays DNS+TCP+TLS to mirror what a
+    cold S3 client / Lambda cold-start would see.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return HttpSample(sample_idx, None, None, None, None, None, None, None,
+                          f"unsupported scheme: {parsed.scheme}")
+    host = parsed.hostname
+    if not host:
+        return HttpSample(sample_idx, None, None, None, None, None, None, None,
+                          "no hostname in URL")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    use_tls = parsed.scheme == "https"
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+
+    resolved_ip: str | None = None
+    overall_start = time.monotonic()
+
+    # --- DNS (skipped if force_ip is set) ---
+    if force_ip is not None:
+        dns_ms = 0.0
+        resolved_ip = force_ip
+        try:
+            socket.inet_pton(socket.AF_INET6, force_ip)
+            family = socket.AF_INET6
+            sockaddr: tuple = (force_ip, port, 0, 0)
+        except OSError:
+            family = socket.AF_INET
+            sockaddr = (force_ip, port)
+        sock_type = socket.SOCK_STREAM
+        proto = 0
+    else:
+        try:
+            t0 = time.monotonic()
+            addrs = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            dns_ms = _ms(t0)
+            family, sock_type, proto, _, sockaddr = addrs[0]
+            resolved_ip = sockaddr[0]
+        except socket.gaierror as e:
+            return HttpSample(sample_idx, None, None, None, None, _ms(overall_start),
+                              None, None, f"dns: {e}")
+
+    sock = socket.socket(family, sock_type, proto)
+    sock.settimeout(timeout)
+    ssock: socket.socket | ssl.SSLSocket = sock
+
+    try:
+        # --- TCP connect ---
+        try:
+            t0 = time.monotonic()
+            sock.connect(sockaddr)
+            tcp_ms = _ms(t0)
+        except (socket.timeout, OSError) as e:
+            return HttpSample(sample_idx, dns_ms, None, None, None, _ms(overall_start),
+                              None, resolved_ip, f"tcp: {e}")
+
+        # --- TLS handshake ---
+        tls_ms: float | None = None
+        if use_tls:
+            try:
+                ctx = ssl.create_default_context()
+                t0 = time.monotonic()
+                ssock = ctx.wrap_socket(sock, server_hostname=host)
+                tls_ms = _ms(t0)
+            except (ssl.SSLError, socket.timeout, OSError) as e:
+                return HttpSample(sample_idx, dns_ms, tcp_ms, None, None,
+                                  _ms(overall_start), None, resolved_ip, f"tls: {e}")
+
+        # --- HTTP request + TTFB ---
+        req = (
+            f"{method} {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"User-Agent: {user_agent}\r\n"
+            f"Accept: */*\r\n"
+            f"Connection: close\r\n\r\n"
+        )
+        try:
+            t0 = time.monotonic()
+            ssock.sendall(req.encode("ascii"))
+            first = ssock.recv(1)
+            ttfb_ms = _ms(t0)
+            if not first:
+                return HttpSample(sample_idx, dns_ms, tcp_ms, tls_ms, ttfb_ms,
+                                  _ms(overall_start), None, resolved_ip,
+                                  "empty response")
+            buf = bytearray(first)
+            # Read just enough to grab the status line
+            while b"\r\n" not in buf and len(buf) < 1024:
+                chunk = ssock.recv(512)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+            status_line = bytes(buf).split(b"\r\n", 1)[0].decode("iso-8859-1", "replace")
+            parts = status_line.split(" ", 2)
+            status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
+        except (socket.timeout, OSError) as e:
+            return HttpSample(sample_idx, dns_ms, tcp_ms, tls_ms, None,
+                              _ms(overall_start), None, resolved_ip, f"http: {e}")
+
+        return HttpSample(
+            sample_idx, dns_ms, tcp_ms, tls_ms, ttfb_ms,
+            _ms(overall_start), status, resolved_ip, None,
+        )
+    finally:
+        try:
+            ssock.close()
+        except OSError:
+            pass
+
+
+def probe_many(
+    url: str,
+    count: int = 10,
+    method: str = "HEAD",
+    timeout: float = 10.0,
+    interval: float = 0.5,
+    force_ip: str | None = None,
+) -> list[HttpSample]:
+    out = []
+    for i in range(count):
+        out.append(probe_once(
+            url, method=method, timeout=timeout,
+            sample_idx=i + 1, force_ip=force_ip,
+        ))
+        if i + 1 < count:
+            time.sleep(interval)
+    return out
+
+
+def aggregate(samples: list[HttpSample]) -> dict:
+    """Return aggregated stats and status-code counts."""
+    def stats(vals: list[float | None]) -> dict:
+        clean = [v for v in vals if v is not None]
+        if not clean:
+            return {"avg": None, "best": None, "worst": None, "stddev": None, "n": 0}
+        n = len(clean)
+        avg = sum(clean) / n
+        var = sum((x - avg) ** 2 for x in clean) / n
+        return {
+            "avg": avg, "best": min(clean), "worst": max(clean),
+            "stddev": var ** 0.5, "n": n,
+        }
+
+    status_counts: dict[int | None, int] = {}
+    for s in samples:
+        status_counts[s.status] = status_counts.get(s.status, 0) + 1
+
+    errors = sum(1 for s in samples if s.error)
+
+    return {
+        "dns": stats([s.dns_ms for s in samples]),
+        "tcp": stats([s.tcp_ms for s in samples]),
+        "tls": stats([s.tls_ms for s in samples]),
+        "ttfb": stats([s.ttfb_ms for s in samples]),
+        "total": stats([s.total_ms for s in samples]),
+        "status_counts": status_counts,
+        "errors": errors,
+        "samples": len(samples),
+    }
+
+
+def status_summary(status_counts: dict[int | None, int]) -> str:
+    """e.g. '200:28,503:2,err:1'"""
+    parts = []
+    for k, v in sorted(status_counts.items(), key=lambda kv: (kv[0] is None, kv[0])):
+        if k is None:
+            parts.append(f"err:{v}")
+        else:
+            parts.append(f"{k}:{v}")
+    return ",".join(parts) or "-"

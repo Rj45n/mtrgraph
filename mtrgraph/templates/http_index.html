@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>HTTP runs</h2>
+
+<form method="get" action="/http" class="card">
+  <label>Filtrer par URL
+    <select name="url" onchange="this.form.submit()">
+      <option value="">— toutes —</option>
+      {% for u in urls %}
+        <option value="{{ u }}" {% if u == current_url %}selected{% endif %}>{{ u }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+
+{% if current_url %}
+<div class="card">
+  <h3 style="margin-top:0">Historique HTTP — {{ current_url }}</h3>
+  <canvas id="history" height="100"></canvas>
+</div>
+<script>
+fetch("/api/http/url/history?url={{ current_url | urlencode }}").then(r => r.json()).then(rows => {
+  const labels = rows.map(r => r.started_at.replace('T',' ').slice(5,16));
+  new Chart(document.getElementById('history'), {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'DNS',   data: rows.map(r => r.dns_avg),   borderColor:'#a78bfa', tension:.3, fill:false },
+      { label:'TCP',   data: rows.map(r => r.tcp_avg),   borderColor:'#22d3ee', tension:.3, fill:false },
+      { label:'TLS',   data: rows.map(r => r.tls_avg),   borderColor:'#f472b6', tension:.3, fill:false },
+      { label:'TTFB',  data: rows.map(r => r.ttfb_avg),  borderColor:'#eab308', tension:.3, fill:false },
+      { label:'Total', data: rows.map(r => r.total_avg), borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.15)', tension:.3, fill:true },
+    ]},
+    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8'}}}, plugins:{legend:{labels:{color:'#e2e8f0'}}}}
+  });
+});
+</script>
+{% endif %}
+
+<table>
+  <thead><tr>
+    <th>#</th><th>URL</th><th>Méthode</th><th>Samples</th>
+    <th>Status</th><th>Errors</th><th>Label</th><th>Début</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td class="num">{{ r.id }}</td>
+      <td><a href="/http?url={{ r.url | urlencode }}" style="color:var(--accent)">{{ r.url }}</a></td>
+      <td>{{ r.method }}</td>
+      <td class="num">{{ r.samples }}</td>
+      <td><span class="pill" style="background:#334155;color:#e2e8f0">{{ r.status_summary or '-' }}</span></td>
+      <td class="num {% if r.errors %}delta-pos{% endif %}">{{ r.errors }}</td>
+      <td>{{ r.label or '' }}</td>
+      <td>{{ r.started_at }}</td>
+      <td><a href="/http/{{ r.id }}" style="color:var(--accent)">détail</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

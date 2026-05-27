@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>HTTP #{{ run.id }} — <code>{{ run.url }}</code></h2>
+<div class="meta">
+  {{ run.method }} · {{ run.samples }} samples · IP {{ run.resolved_ip or '?' }} ·
+  status <span class="pill" style="background:#334155;color:#e2e8f0">{{ run.status_summary or '-' }}</span> ·
+  errors <strong>{{ run.errors }}</strong> · démarré {{ run.started_at }} · label {{ run.label or '—' }}
+</div>
+
+<div class="grid2" style="margin-top:14px">
+  <div class="card"><canvas id="stages" height="200"></canvas></div>
+  <div class="card"><canvas id="ttfb" height="200"></canvas></div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">Résumé par étape</h3>
+  <table>
+    <thead><tr><th>Étape</th><th>Avg ms</th><th>Best</th><th>Worst</th><th>StDev</th><th>n</th></tr></thead>
+    <tbody>
+    {% for stage in ['dns','tcp','tls','ttfb','total'] %}
+      {% set s = agg[stage] %}
+      <tr>
+        <td><strong>{{ stage|upper }}</strong></td>
+        <td class="num" style="color:{{ http_hex(stage, s.avg) }};font-weight:600">{{ '%.1f' % s.avg if s.avg is not none else '-' }}</td>
+        <td class="num">{{ '%.1f' % s.best if s.best is not none else '-' }}</td>
+        <td class="num">{{ '%.1f' % s.worst if s.worst is not none else '-' }}</td>
+        <td class="num">{{ '%.1f' % s.stddev if s.stddev is not none else '-' }}</td>
+        <td class="num">{{ s.n }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">Détail par sample</h3>
+  <table>
+    <thead><tr>
+      <th>#</th><th>DNS</th><th>TCP</th><th>TLS</th><th>TTFB</th><th>Total</th><th>Status</th><th>Erreur</th>
+    </tr></thead>
+    <tbody>
+    {% for s in samples %}
+      <tr>
+        <td class="num">{{ s.sample_idx }}</td>
+        <td class="num" style="color:{{ http_hex('dns', s.dns_ms) }}">{{ '%.1f' % s.dns_ms if s.dns_ms is not none else '-' }}</td>
+        <td class="num" style="color:{{ http_hex('tcp', s.tcp_ms) }}">{{ '%.1f' % s.tcp_ms if s.tcp_ms is not none else '-' }}</td>
+        <td class="num" style="color:{{ http_hex('tls', s.tls_ms) }}">{{ '%.1f' % s.tls_ms if s.tls_ms is not none else '-' }}</td>
+        <td class="num" style="color:{{ http_hex('ttfb', s.ttfb_ms) }}">{{ '%.1f' % s.ttfb_ms if s.ttfb_ms is not none else '-' }}</td>
+        <td class="num" style="color:{{ http_hex('total', s.total_ms) }};font-weight:600">{{ '%.1f' % s.total_ms if s.total_ms is not none else '-' }}</td>
+        <td class="num">
+          {% if s.status %}
+            {% set ok = (s.status >= 200 and s.status < 300) %}
+            <span class="pill" style="background:{{ '#16a34a' if ok else '#dc2626' }};color:#fff">{{ s.status }}</span>
+          {% else %}-{% endif %}
+        </td>
+        <td class="delta-pos">{{ s.error or '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+const samples = {{ samples | tojson }};
+const labels = samples.map(s => s.sample_idx);
+new Chart(document.getElementById('stages'), {
+  type:'bar',
+  data:{ labels, datasets:[
+    { label:'DNS',  data: samples.map(s => s.dns_ms),  backgroundColor:'#a78bfa' },
+    { label:'TCP',  data: samples.map(s => s.tcp_ms),  backgroundColor:'#22d3ee' },
+    { label:'TLS',  data: samples.map(s => s.tls_ms),  backgroundColor:'#f472b6' },
+    { label:'TTFB', data: samples.map(s => s.ttfb_ms), backgroundColor:'#eab308' },
+  ]},
+  options:{ responsive:true, scales:{ x:{ stacked:true, ticks:{color:'#94a3b8'} }, y:{ stacked:true, ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'} } }, plugins:{ legend:{ labels:{color:'#e2e8f0'} }, title:{display:true,text:'Décomposition par sample (empilé)', color:'#e2e8f0'} } }
+});
+new Chart(document.getElementById('ttfb'), {
+  type:'line',
+  data:{ labels, datasets:[
+    { label:'Total', data: samples.map(s => s.total_ms), borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.2)', tension:.2, fill:true },
+    { label:'TTFB',  data: samples.map(s => s.ttfb_ms),  borderColor:'#eab308', tension:.2 },
+  ]},
+  options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8'}}}, plugins:{ legend:{labels:{color:'#e2e8f0'}}, title:{display:true,text:'Total et TTFB par sample', color:'#e2e8f0'}}}
+});
+</script>
+{% endblock %}

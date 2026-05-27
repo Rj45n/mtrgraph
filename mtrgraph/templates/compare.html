@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Diff #{{ run_a.id }} → #{{ run_b.id }}</h2>
+{% if scope_mismatch %}
+<div class="card" style="background:#7f1d1d;color:#fee2e2;border-left:4px solid #dc2626">
+  <strong>⚠ Scope différent</strong> — les deux runs ne sont pas sur la même (target, proto, port). Le diff peut être trompeur.
+</div>
+{% endif %}
+<div class="meta">
+  A : {{ run_a.target }} <span class="pill" style="background:#334155;color:#e2e8f0">{{ run_a.proto_label }}</span> · {{ run_a.started_at }} ({{ run_a.label or '—' }})<br>
+  B : {{ run_b.target }} <span class="pill" style="background:#334155;color:#e2e8f0">{{ run_b.proto_label }}</span> · {{ run_b.started_at }} ({{ run_b.label or '—' }})
+</div>
+
+<div class="card" style="margin-top:14px"><canvas id="cmp" height="120"></canvas></div>
+
+<table>
+  <thead><tr>
+    <th>#</th><th>Host</th>
+    <th>Avg A</th><th>Avg B</th><th>ΔAvg</th>
+    <th>Loss A</th><th>Loss B</th><th>ΔLoss</th>
+    <th>Verdict</th>
+  </tr></thead>
+  <tbody>
+  {% for d in deltas %}
+    <tr>
+      <td class="num">{{ d.hop_index }}</td>
+      <td>{{ d.host or '???' }}</td>
+      <td class="num">{{ '%.1f' % d.avg_a if d.avg_a is not none else '-' }}</td>
+      <td class="num">{{ '%.1f' % d.avg_b if d.avg_b is not none else '-' }}</td>
+      <td class="num {% if d.d_avg is not none and d.d_avg>0 %}delta-pos{% elif d.d_avg is not none and d.d_avg<0 %}delta-neg{% else %}delta-zero{% endif %}">
+        {% if d.d_avg is none %}-{% else %}{{ '%+.1f' % d.d_avg }} ms{% endif %}
+      </td>
+      <td class="num">{{ ('%.1f' % d.loss_a) + '%' if d.loss_a is not none else '-' }}</td>
+      <td class="num">{{ ('%.1f' % d.loss_b) + '%' if d.loss_b is not none else '-' }}</td>
+      <td class="num {% if d.d_loss is not none and d.d_loss>0 %}delta-pos{% elif d.d_loss is not none and d.d_loss<0 %}delta-neg{% else %}delta-zero{% endif %}">
+        {% if d.d_loss is none %}-{% else %}{{ '%+.1f' % d.d_loss }} pt{% endif %}
+      </td>
+      <td class="verdict-{{ d.severity }}">{{ d.severity|upper }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+const data = {{ deltas | tojson }};
+const labels = data.map(d => `${d.hop_index}`);
+const avgA = data.map(d => d.avg_a);
+const avgB = data.map(d => d.avg_b);
+new Chart(document.getElementById('cmp'), {
+  type:'line', data:{ labels, datasets:[
+    { label:'A', data: avgA, borderColor:'#94a3b8', tension:.2 },
+    { label:'B', data: avgB, borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.2)', tension:.2, fill:true },
+  ]},
+  options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'avg ms', color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8'}}}, plugins:{legend:{labels:{color:'#e2e8f0'}}, title:{display:true,text:'Latence moyenne A vs B', color:'#e2e8f0'}}}
+});
+</script>
+{% endblock %}

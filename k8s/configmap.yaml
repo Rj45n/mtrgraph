@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mtrgraph-config
+  namespace: mtrgraph
+data:
+  # ─── À ADAPTER ─────────────────────────────────────────────────────────
+  # URL HTTPS à surveiller (n'importe quel endpoint S3-compatible, API, etc.)
+  # Exemples :
+  #   AWS S3      : "https://s3.eu-west-3.amazonaws.com/"
+  #   MinIO       : "https://minio.example.com/"
+  #   Scaleway    : "https://s3.fr-par.scw.cloud/"
+  #   OVH         : "https://s3.gra.io.cloud.ovh.net/"
+  #   Free Pro    : "https://s3.fr-mar.freepro.com/"
+  TARGET_URL: "https://CHANGE-ME.example.com/"
+
+  # Cible MTR (réseau L3/L4) — l'IP ou hostname à tracerouter.
+  # Mettre l'IP du frontend de TARGET_URL pour mesurer le chemin exact.
+  MTR_TARGET: "CHANGE-ME"
+  MTR_PROTO: "tcp"            # icmp | udp | tcp
+  MTR_PORT: "443"
+  MTR_CYCLES: "10"
+  # ─── Paramètres du daemon ─────────────────────────────────────────────
+  INTERVAL: "60"              # secondes entre itérations
+  COUNT: "5"                  # samples par itération HTTP
+  BASELINE_N: "10"            # taille fenêtre baseline (nb runs)
+  METHOD: "HEAD"              # HEAD | GET
+  ERROR_THRESHOLD: "10"       # alerter si > X% d'erreurs sur un run
+---
+# Optionnel: credentials S3 pour tester via l'UI /s3 ou les commandes s3-*.
+# A injecter dans le pod via envFrom. Ne PAS committer en clair en prod —
+# utiliser `kubectl create secret generic mtrgraph-s3-creds --from-literal=…`
+# et supprimer ce bloc, ou bien chiffrer avec SealedSecrets/SOPS/etc.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mtrgraph-s3-creds
+  namespace: mtrgraph
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "CHANGE-ME"
+  AWS_SECRET_ACCESS_KEY: "CHANGE-ME"
+  # AWS_SESSION_TOKEN: "…"     # si auth STS

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: mtrgraph
+description: Network & S3 latency diagnostic toolkit — MTR + HTTP/TLS/TTFB probes + S3 SigV4 operations + real-time dashboard + scheduled tests with webhook alerts.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/RJ45/mtrgraph
+sources:
+  - https://github.com/RJ45/mtrgraph
+keywords:
+  - mtr
+  - network
+  - diagnostic
+  - s3
+  - latency
+  - monitoring
+  - sre
+maintainers:
+  - name: Romain JEAN
+    email: romain.jean34@gmail.com

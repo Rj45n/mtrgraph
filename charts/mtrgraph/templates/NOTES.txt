@@ -1,0 +1,28 @@
+mtrgraph chart installed in namespace {{ .Release.Namespace }}.
+
+To access the web UI:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "mtrgraph.fullname" . }}-web {{ .Values.service.port }}:{{ .Values.service.port }}
+
+Then open http://127.0.0.1:{{ .Values.service.port }}/
+
+{{- if .Values.ingress.enabled }}
+
+Ingress is enabled. Reachable at:
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- end }}
+
+Retention is set to {{ .Values.retention.days }} days, evaluated every {{ .Values.retention.periodHours }}h.
+PVC size: {{ if .Values.persistence.enabled }}{{ .Values.persistence.size }}{{ else }}DISABLED (data lost on pod restart!){{ end }}
+
+{{- if .Values.s3Credentials.enabled }}
+
+S3 credentials are mounted from secret "{{ include "mtrgraph.s3SecretName" . }}".
+{{- else }}
+
+S3 credentials NOT enabled. Set s3Credentials.enabled=true OR provide your own
+secret name via s3Credentials.existingSecret to use the /s3 UI for authenticated tests.
+{{- end }}
+
+For details: https://github.com/rj45n/mtrgraph/blob/main/docs/kubernetes.md
