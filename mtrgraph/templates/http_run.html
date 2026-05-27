@@ -5,7 +5,22 @@
   {{ run.method }} · {{ run.samples }} samples · IP {{ run.resolved_ip or '?' }} ·
   status <span class="pill" style="background:#334155;color:#e2e8f0">{{ run.status_summary or '-' }}</span> ·
   errors <strong>{{ run.errors }}</strong> · démarré {{ run.started_at }} · label {{ run.label or '—' }}
+  · <a href="/http/by-url?url={{ run.url | urlencode }}" style="color:var(--accent)">📊 Page dédiée à cette URL</a>
 </div>
+
+{% if run.tls_version %}
+<div class="card" style="background:#0b1220; padding:10px 14px; border-radius:6px; margin-top:10px; border-left:3px solid var(--accent)">
+  <div style="font-size:11px; color:var(--muted); text-transform:uppercase">Info TLS du run</div>
+  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:6px; font-size:13px; font-family:monospace">
+    <span><strong>{{ run.tls_version }}</strong></span>
+    {% if run.tls_cipher %}<span>cipher: {{ run.tls_cipher }}</span>{% endif %}
+    {% if run.cert_subject_cn %}<span>cert: {{ run.cert_subject_cn }}</span>{% endif %}
+    {% if run.cert_issuer_cn %}<span>issuer: {{ run.cert_issuer_cn }}</span>{% endif %}
+    {% if run.cert_not_after %}<span>exp: {{ run.cert_not_after }}</span>{% endif %}
+    {% if run.cert_san_count %}<span>{{ run.cert_san_count }} SAN(s)</span>{% endif %}
+  </div>
+</div>
+{% endif %}
 
 <div class="grid2" style="margin-top:14px">
   <div class="card"><canvas id="stages" height="200"></canvas></div>

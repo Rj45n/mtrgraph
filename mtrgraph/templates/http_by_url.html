@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .panel { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
+  .panel h3 { margin:0 0 8px 0; color:var(--accent); font-size:14px }
+  .help { font-size:11px; color:var(--muted); margin-bottom:8px }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr } }
+  .tls-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px }
+  .tls-box { background:#0b1220; padding:10px 12px; border-radius:4px }
+  .tls-box .lab { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px }
+  .tls-box .val { font-size:14px; font-weight:600; margin-top:3px; font-family:monospace }
+  .tls-box.green { border-left:3px solid var(--green) }
+  .tls-box.yellow { border-left:3px solid var(--yellow) }
+  .tls-box.red { border-left:3px solid var(--red) }
+  .status-strip { display:flex; flex-wrap:wrap; gap:2px; margin-top:6px }
+  .status-strip > div { width:14px; height:18px; border-radius:2px }
+  .ip-table { font-size:12px }
+  .ip-bad { background:#7f1d1d; color:#fee2e2 }
+  .ip-warn { background:#7c2d12; color:#fed7aa }
+</style>
+
+<div class="filter-bar" style="display:flex; gap:10px; align-items:center; padding:12px 14px; background:#0b1220; border-radius:6px; margin-bottom:12px">
+  <div style="flex:1">
+    <label style="font-size:11px; color:var(--muted); text-transform:uppercase">URL</label><br>
+    <select id="f-url" onchange="if(this.value) window.location='/http/by-url?url='+encodeURIComponent(this.value)" style="width:100%; padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-size:13px">
+      {% for u in urls %}
+        <option value="{{ u }}" {% if u == url %}selected{% endif %}>{{ u }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="font-size:11px; color:var(--muted); text-transform:uppercase">Derniers N runs</label><br>
+    <input id="f-last-n" type="number" value="100" min="10" max="1000" style="padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-size:13px; width:100px">
+  </div>
+  <div style="flex:0">
+    <label>&nbsp;</label><br>
+    <button id="refresh-btn" style="padding:6px 14px; background:var(--accent); color:#020617; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600">↻ Refresh</button>
+  </div>
+</div>
+
+<h2 style="margin:0">HTTP URL : <code style="font-size:.7em">{{ url }}</code></h2>
+
+<div class="panel" id="tls-panel">
+  <h3>1. Info TLS du dernier run</h3>
+  <div class="help">Version TLS, cipher utilisé, sujet/issuer du cert, expiration. Le compteur expiration passe en jaune à &lt;30 jours, rouge à &lt;7 jours.</div>
+  <div id="tls-content"><em class="meta">Chargement…</em></div>
+</div>
+
+<div class="panel">
+  <h3>2. Évolution par étape (avg sur chaque run)</h3>
+  <div class="help">5 courbes : DNS / TCP / TLS / TTFB / Total. Suit la dérive par étape.</div>
+  <canvas id="ch-stages" height="100"></canvas>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h3>3. Status codes par run</h3>
+    <div class="help">Strip de cellules colorées (vert 2xx / jaune 4xx / rouge 5xx ou err). Ancien → récent.</div>
+    <div id="status-strip"></div>
+  </div>
+  <div class="panel">
+    <h3>4. Taux d'erreurs glissant</h3>
+    <div class="help">% d'erreurs par run (fenêtre simple sans lissage).</div>
+    <canvas id="ch-err" height="100"></canvas>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>5. Stats par IP résolue</h3>
+  <div class="help">Quand l'URL résout sur plusieurs IPs (round-robin DNS), agrégation des samples par IP. Code couleur vert/orange/rouge selon ratio vs médiane et % erreurs.</div>
+  <div id="ip-table"></div>
+</div>
+
+<script>
+const URL_ = {{ url | tojson }};
+const charts = {};
+function chart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), cfg);
+}
+function fmtTs(iso) { return iso.replace('T',' ').slice(5,16); }
+function statusColor(s) {
+  if (!s) return '#dc2626';
+  if (s >= 200 && s < 300) return '#16a34a';
+  if (s >= 300 && s < 400) return '#22d3ee';
+  if (s >= 400 && s < 500) return '#eab308';
+  return '#dc2626';
+}
+
+function renderTls() {
+  fetch(`/api/http/url/series?url=${encodeURIComponent(URL_)}&limit=1`).then(r => r.json()).then(rows => {
+    if (!rows.length) { document.getElementById('tls-content').innerHTML = '<em class="help">Aucun run.</em>'; return; }
+    const last = rows[rows.length-1];
+    const tlsv = last.tls_version || '—';
+    const cipher = last.tls_cipher || '—';
+    const subj = last.cert_subject_cn || '—';
+    const issuer = last.cert_issuer_cn || '—';
+    const notAfter = last.cert_not_after;
+    let expCls = ''; let expText = '—';
+    if (notAfter) {
+      // Format: "Jul  9 12:00:00 2026 GMT"
+      const d = new Date(notAfter);
+      if (!isNaN(d)) {
+        const days = Math.floor((d - new Date()) / (1000*60*60*24));
+        expText = `${notAfter} (J-${days})`;
+        if (days < 7) expCls = 'red';
+        else if (days < 30) expCls = 'yellow';
+        else expCls = 'green';
+      } else {
+        expText = notAfter;
+      }
+    }
+    const sanCount = last.cert_san_count !== null ? last.cert_san_count : '—';
+    const tlsVCls = tlsv === 'TLSv1.3' ? 'green' : tlsv && tlsv.startsWith('TLSv1') ? 'yellow' : '';
+    document.getElementById('tls-content').innerHTML = `
+      <div class="tls-grid">
+        <div class="tls-box ${tlsVCls}"><div class="lab">TLS version</div><div class="val">${tlsv}</div></div>
+        <div class="tls-box"><div class="lab">Cipher</div><div class="val" style="font-size:12px">${cipher}</div></div>
+        <div class="tls-box"><div class="lab">Cert CN</div><div class="val" style="font-size:12px">${subj}</div></div>
+        <div class="tls-box"><div class="lab">Issuer</div><div class="val" style="font-size:12px">${issuer}</div></div>
+        <div class="tls-box ${expCls}"><div class="lab">Expiration</div><div class="val" style="font-size:11px">${expText}</div></div>
+        <div class="tls-box"><div class="lab">SAN count</div><div class="val">${sanCount}</div></div>
+      </div>`;
+  });
+}
+
+async function renderAll() {
+  const lastN = parseInt(document.getElementById('f-last-n').value || '100');
+  const rows = await fetch(`/api/http/url/series?url=${encodeURIComponent(URL_)}&limit=${lastN}`).then(r => r.json());
+  const labels = rows.map(r => fmtTs(r.started_at));
+
+  // Stages chart
+  chart('ch-stages', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'DNS',   data: rows.map(r => r.agg_dns_avg),   borderColor:'#a78bfa', tension:.3, fill:false },
+      { label:'TCP',   data: rows.map(r => r.agg_tcp_avg),   borderColor:'#22d3ee', tension:.3, fill:false },
+      { label:'TLS',   data: rows.map(r => r.agg_tls_avg),   borderColor:'#f472b6', tension:.3, fill:false },
+      { label:'TTFB',  data: rows.map(r => r.agg_ttfb_avg),  borderColor:'#eab308', tension:.3, fill:false },
+      { label:'Total', data: rows.map(r => r.agg_total_avg), borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,.15)', tension:.3, fill:true },
+    ]},
+    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20}}}, plugins:{ legend:{labels:{color:'#e2e8f0'}}}}
+  });
+
+  // Errors chart
+  chart('ch-err', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'% erreurs', data: rows.map(r => r.err_pct), borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.2)', tension:.3, fill:true },
+    ]},
+    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, beginAtZero:true, suggestedMax:10, title:{display:true,text:'%', color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20}}}, plugins:{ legend:{labels:{color:'#e2e8f0'}}}}
+  });
+
+  // Status strip (one cell per run, colored by first sample status)
+  const strip = document.getElementById('status-strip');
+  strip.innerHTML = '';
+  for (const r of rows) {
+    const ss = r.status_summary || '';
+    // Parse most-frequent status from "200:28,503:2"
+    const parts = ss.split(',').map(p => {
+      const [k, v] = p.split(':');
+      return [k.trim(), parseInt(v || '0')];
+    }).filter(x => x[0]);
+    parts.sort((a,b) => b[1]-a[1]);
+    const main = parts.length ? parts[0][0] : null;
+    let status = null;
+    if (main === 'err' || main === '0') status = null;
+    else if (main && !isNaN(parseInt(main))) status = parseInt(main);
+    const div = document.createElement('div');
+    div.style.background = statusColor(status);
+    div.title = `${fmtTs(r.started_at)} · ${ss || 'no status'}${r.errors ? ' · '+r.errors+' err' : ''}`;
+    strip.appendChild(div);
+  }
+
+  // Per-IP table
+  const byIp = await fetch(`/api/http/url/by-ip?url=${encodeURIComponent(URL_)}&limit=${lastN}`).then(r => r.json());
+  const totals = byIp.map(r => r.avg_total_ms).filter(v => v !== null).sort((a,b)=>a-b);
+  const median = totals.length ? totals[Math.floor(totals.length/2)] : null;
+  function rowCls(r) {
+    if (r.err_pct >= 10) return 'ip-bad';
+    if (median && r.avg_total_ms && r.avg_total_ms >= median * 2) return 'ip-bad';
+    if (median && r.avg_total_ms && r.avg_total_ms >= median * 1.5) return 'ip-warn';
+    return '';
+  }
+  document.getElementById('ip-table').innerHTML = `
+    <table class="ip-table">
+      <thead><tr><th>IP</th><th class="num">Samples</th><th class="num">Err %</th><th class="num">DNS</th><th class="num">TCP</th><th class="num">TLS</th><th class="num">TTFB</th><th class="num">Total</th></tr></thead>
+      <tbody>
+      ${byIp.map(r => {
+        const fmt = v => v === null ? '—' : v.toFixed(1);
+        return `<tr class="${rowCls(r)}">
+          <td style="font-family:monospace"><strong>${r.ip}</strong></td>
+          <td class="num">${r.samples}</td>
+          <td class="num"><strong>${r.err_pct}%</strong></td>
+          <td class="num">${fmt(r.avg_dns_ms)}</td>
+          <td class="num">${fmt(r.avg_tcp_ms)}</td>
+          <td class="num">${fmt(r.avg_tls_ms)}</td>
+          <td class="num"><strong>${fmt(r.avg_ttfb_ms)}</strong></td>
+          <td class="num"><strong>${fmt(r.avg_total_ms)}</strong></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>`;
+}
+
+document.getElementById('refresh-btn').addEventListener('click', () => { renderTls(); renderAll(); });
+document.getElementById('f-last-n').addEventListener('change', renderAll);
+renderTls();
+renderAll();
+setInterval(() => { renderTls(); renderAll(); }, 30000);
+</script>
+{% endblock %}

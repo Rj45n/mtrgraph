@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .panel { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
+  .panel h3 { margin:0 0 8px 0; color:var(--accent); font-size:14px }
+  .help { font-size:11px; color:var(--muted); margin-bottom:8px }
+  .meta-box { background:#0b1220; padding:10px 12px; border-radius:4px; font-size:13px; font-family:monospace }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr } }
+  .diff-table { font-size:13px; width:100% }
+  .diff-table th { background:#0b1220; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; padding:6px 10px }
+  .diff-table td { padding:8px 10px; border-bottom:1px solid #334155; font-variant-numeric:tabular-nums }
+  .verdict-ok { color:var(--green); font-weight:600 }
+  .verdict-warning { color:var(--yellow); font-weight:600 }
+  .verdict-critical { color:var(--red); font-weight:700 }
+  .delta-up { color:var(--red) }
+  .delta-down { color:var(--green) }
+</style>
+
+<h2>HTTP compare · #{{ run_a.id }} → #{{ run_b.id }}</h2>
+
+<div class="grid2">
+  <div class="panel">
+    <h3>Run A · #{{ run_a.id }}</h3>
+    <div class="meta-box">
+      <div>{{ run_a.method }} <code style="color:var(--accent)">{{ run_a.url }}</code></div>
+      <div style="color:var(--muted); margin-top:4px">{{ run_a.samples }} samples · {{ run_a.started_at }} · IP {{ run_a.resolved_ip or '?' }} · status {{ run_a.status_summary or '-' }}</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Run B · #{{ run_b.id }}</h3>
+    <div class="meta-box">
+      <div>{{ run_b.method }} <code style="color:var(--accent)">{{ run_b.url }}</code></div>
+      <div style="color:var(--muted); margin-top:4px">{{ run_b.samples }} samples · {{ run_b.started_at }} · IP {{ run_b.resolved_ip or '?' }} · status {{ run_b.status_summary or '-' }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>Diff par étape (avg ms)</h3>
+  <div class="help">Verdict warning = +50% et +20ms ; critical = +200% et +50ms. Δ% positif = B plus lent que A.</div>
+  <table class="diff-table">
+    <thead><tr>
+      <th>Étape</th>
+      <th class="num">A avg</th>
+      <th class="num">B avg</th>
+      <th class="num">Δ abs</th>
+      <th class="num">Δ %</th>
+      <th>Verdict</th>
+    </tr></thead>
+    <tbody>
+    {% for stage in stages %}
+      {% set d = deltas[stage] %}
+      <tr>
+        <td><strong>{{ stage.upper() }}</strong></td>
+        <td class="num">{{ ('%.1f ms' % d.a) if d.a is not none else '—' }}</td>
+        <td class="num">{{ ('%.1f ms' % d.b) if d.b is not none else '—' }}</td>
+        <td class="num {% if d.d_abs is not none and d.d_abs > 0 %}delta-up{% elif d.d_abs is not none and d.d_abs < 0 %}delta-down{% endif %}">
+          {% if d.d_abs is none %}—{% else %}{{ '%+.1f' % d.d_abs }} ms{% endif %}
+        </td>
+        <td class="num {% if d.d_pct is not none and d.d_pct > 0 %}delta-up{% elif d.d_pct is not none and d.d_pct < 0 %}delta-down{% endif %}">
+          {% if d.d_pct is none %}—{% else %}{{ '%+.1f' % d.d_pct }}%{% endif %}
+        </td>
+        <td><span class="verdict-{{ d.verdict }}">{{ d.verdict.upper() }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h3>Comparaison visuelle (Run A vs Run B)</h3>
+  <canvas id="ch-bars" height="80"></canvas>
+</div>
+
+<script>
+const STAGES = ['DNS','TCP','TLS','TTFB','Total'];
+const A_VALUES = [{% for stage in stages %}{{ agg_a[stage].avg if agg_a[stage].avg is not none else 'null' }}{{ ',' if not loop.last }}{% endfor %}];
+const B_VALUES = [{% for stage in stages %}{{ agg_b[stage].avg if agg_b[stage].avg is not none else 'null' }}{{ ',' if not loop.last }}{% endfor %}];
+
+new Chart(document.getElementById('ch-bars'), {
+  type:'bar',
+  data:{ labels: STAGES, datasets:[
+    { label:'Run A #{{ run_a.id }}', data: A_VALUES, backgroundColor: 'rgba(148,163,184,.7)' },
+    { label:'Run B #{{ run_b.id }}', data: B_VALUES, backgroundColor: 'rgba(56,189,248,.7)' },
+  ]},
+  options:{ responsive:true, scales:{ y:{ beginAtZero:true, ticks:{color:'#94a3b8'}, title:{display:true,text:'avg ms', color:'#94a3b8'}}, x:{ticks:{color:'#94a3b8'}}}, plugins:{legend:{labels:{color:'#e2e8f0'}}}}
+});
+</script>
+{% endblock %}

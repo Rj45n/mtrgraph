@@ -81,13 +81,18 @@ def _run_schedule(row, db_path: Path, log_fn) -> None:
 
         elif kind == "http":
             samples, summary, errors, resolved_ip = exec_http.execute(config)
+            tls_meta = db.tls_meta_from_samples(samples)
             with db.session(db_path) as conn:
                 run_id = db.insert_http_run(
                     conn, config["url"], config.get("method", "HEAD"), len(samples),
                     config.get("label", "scheduled"), resolved_ip, summary, errors,
+                    tls_meta=tls_meta,
                 )
                 db.insert_http_samples(conn, run_id, samples)
                 db.finalize_http_run(conn, run_id)
+            # auto_mtr default True (parity with S3): correlates with dashboard RTT chart
+            if config.get("auto_mtr", True) and resolved_ip:
+                exec_mtr.trigger_auto_mtr(resolved_ip, db_path, log_fn)
             status = f"err:{errors}/{len(samples)}" if errors else f"ok:{summary}"
             _finalize(db_path, sid, row, run_id, status)
             log_fn(f"[sched #{sid} {name}] http → {status} (run #{run_id})")

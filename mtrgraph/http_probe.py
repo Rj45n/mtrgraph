@@ -23,6 +23,14 @@ class HttpSample:
     status: int | None
     resolved_ip: str | None
     error: str | None
+    # TLS metadata captured during handshake (only first sample matters for a
+    # given URL — TLS doesn't change per-sample under normal operation)
+    tls_version: str | None = None
+    tls_cipher: str | None = None
+    cert_subject_cn: str | None = None
+    cert_issuer_cn: str | None = None
+    cert_not_after: str | None = None
+    cert_san_count: int | None = None
 
 
 def _ms(start: float) -> float:
@@ -99,12 +107,30 @@ def probe_once(
 
         # --- TLS handshake ---
         tls_ms: float | None = None
+        tls_meta: dict = {}
         if use_tls:
             try:
                 ctx = ssl.create_default_context()
                 t0 = time.monotonic()
                 ssock = ctx.wrap_socket(sock, server_hostname=host)
                 tls_ms = _ms(t0)
+                # Capture TLS info (best-effort, never blocks)
+                try:
+                    tls_meta["tls_version"] = ssock.version()
+                    c = ssock.cipher()
+                    if c:
+                        tls_meta["tls_cipher"] = c[0]
+                    cert = ssock.getpeercert()
+                    if cert:
+                        subj = dict((x[0] for x in cert.get("subject", ())))
+                        issuer = dict((x[0] for x in cert.get("issuer", ())))
+                        tls_meta["cert_subject_cn"] = subj.get("commonName")
+                        tls_meta["cert_issuer_cn"] = issuer.get("commonName")
+                        tls_meta["cert_not_after"] = cert.get("notAfter")
+                        sans = cert.get("subjectAltName", ())
+                        tls_meta["cert_san_count"] = len(sans)
+                except Exception:
+                    pass
             except (ssl.SSLError, socket.timeout, OSError) as e:
                 return HttpSample(sample_idx, dns_ms, tcp_ms, None, None,
                                   _ms(overall_start), None, resolved_ip, f"tls: {e}")
@@ -143,6 +169,12 @@ def probe_once(
         return HttpSample(
             sample_idx, dns_ms, tcp_ms, tls_ms, ttfb_ms,
             _ms(overall_start), status, resolved_ip, None,
+            tls_version=tls_meta.get("tls_version"),
+            tls_cipher=tls_meta.get("tls_cipher"),
+            cert_subject_cn=tls_meta.get("cert_subject_cn"),
+            cert_issuer_cn=tls_meta.get("cert_issuer_cn"),
+            cert_not_after=tls_meta.get("cert_not_after"),
+            cert_san_count=tls_meta.get("cert_san_count"),
         )
     finally:
         try:

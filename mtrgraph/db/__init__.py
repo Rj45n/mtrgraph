@@ -177,6 +177,13 @@ def init_db(path: Path = DEFAULT_DB) -> None:
     with _connect(path) as conn:
         conn.executescript(SCHEMA)
         _migrate_add_column(conn, "schedules", "webhook_url", "TEXT")
+        # TLS info captured on the first sample of each http_run
+        _migrate_add_column(conn, "http_runs", "tls_version", "TEXT")
+        _migrate_add_column(conn, "http_runs", "tls_cipher", "TEXT")
+        _migrate_add_column(conn, "http_runs", "cert_subject_cn", "TEXT")
+        _migrate_add_column(conn, "http_runs", "cert_issuer_cn", "TEXT")
+        _migrate_add_column(conn, "http_runs", "cert_not_after", "TEXT")
+        _migrate_add_column(conn, "http_runs", "cert_san_count", "INTEGER")
 
 
 @contextmanager
@@ -204,7 +211,7 @@ from .mtr import (  # noqa: E402
 from .http_runs import (  # noqa: E402
     insert_http_run, finalize_http_run, insert_http_samples,
     list_http_runs, get_http_run, get_http_samples, delete_http_run,
-    http_baseline,
+    http_baseline, tls_meta_from_samples,
 )
 from .s3 import (  # noqa: E402
     insert_s3_run, list_s3_runs, get_s3_run, delete_s3_run, s3_baseline,

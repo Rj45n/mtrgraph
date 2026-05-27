@@ -14,16 +14,40 @@ def insert_http_run(
     resolved_ip: str | None,
     status_summary: str | None,
     errors: int,
+    tls_meta: dict | None = None,
 ) -> int:
+    """Insert an http_run. `tls_meta` (optional) carries TLS metadata captured
+    from the first successful sample (tls_version, tls_cipher, cert_*)."""
+    m = tls_meta or {}
     cur = conn.execute(
         """INSERT INTO http_runs(url, method, label, samples, started_at, resolved_ip,
-                                 status_summary, errors)
-           VALUES(?,?,?,?,?,?,?,?)""",
+                                 status_summary, errors,
+                                 tls_version, tls_cipher, cert_subject_cn,
+                                 cert_issuer_cn, cert_not_after, cert_san_count)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (url, method, label, samples,
          datetime.now(timezone.utc).isoformat(timespec="seconds"),
-         resolved_ip, status_summary, errors),
+         resolved_ip, status_summary, errors,
+         m.get("tls_version"), m.get("tls_cipher"), m.get("cert_subject_cn"),
+         m.get("cert_issuer_cn"), m.get("cert_not_after"), m.get("cert_san_count")),
     )
     return cur.lastrowid
+
+
+def tls_meta_from_samples(samples: list) -> dict:
+    """Pull TLS metadata from the first sample that has tls_version set."""
+    for s in samples:
+        v = getattr(s, "tls_version", None)
+        if v:
+            return {
+                "tls_version": v,
+                "tls_cipher": getattr(s, "tls_cipher", None),
+                "cert_subject_cn": getattr(s, "cert_subject_cn", None),
+                "cert_issuer_cn": getattr(s, "cert_issuer_cn", None),
+                "cert_not_after": getattr(s, "cert_not_after", None),
+                "cert_san_count": getattr(s, "cert_san_count", None),
+            }
+    return {}
 
 
 def finalize_http_run(conn: sqlite3.Connection, run_id: int) -> None:

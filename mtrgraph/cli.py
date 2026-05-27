@@ -177,13 +177,19 @@ def cmd_http(args: argparse.Namespace, console: Console) -> int:
     agg = http_aggregate(samples)
     summary = http_status_summary(agg["status_counts"])
     resolved_ip = next((s.resolved_ip for s in samples if s.resolved_ip), None)
+    tls_meta = db.tls_meta_from_samples(samples)
     with db.session(args.db) as conn:
         run_id = db.insert_http_run(
             conn, args.url, args.method, len(samples), args.label,
             resolved_ip, summary, agg["errors"],
+            tls_meta=tls_meta,
         )
         db.insert_http_samples(conn, run_id, samples)
         db.finalize_http_run(conn, run_id)
+    # Auto-MTR towards resolved IP (alimente la courbe RTT du dashboard)
+    if not getattr(args, "no_mtr", False) and resolved_ip:
+        from .scheduler import trigger_auto_mtr
+        trigger_auto_mtr(resolved_ip, args.db)
     console.print(
         f"[green]✓ http_run #{run_id} sauvegardé[/]  "
         f"ip={resolved_ip or '?'}  status={summary}  errors={agg['errors']}"
@@ -584,6 +590,8 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("-T", "--timeout", type=float, default=10.0)
     h.add_argument("--label", default=None)
     h.add_argument("--ip", default=None, help="force la résolution sur cette IP (garde SNI/Host du hostname)")
+    h.add_argument("--no-mtr", action="store_true",
+                   help="ne pas déclencher d'auto-MTR vers l'IP résolue après le probe")
     h.add_argument("-v", "--verbose", action="store_true", help="affiche aussi le détail par sample")
     _add_db_arg(h)
     h.set_defaults(func=cmd_http)

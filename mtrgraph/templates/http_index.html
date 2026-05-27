@@ -14,6 +14,12 @@
 </form>
 
 {% if current_url %}
+<div class="card" style="display:flex; gap:12px; align-items:center; padding:10px 14px; background:#0b1220; border-radius:6px; margin-bottom:12px">
+  <span>Vue détaillée :</span>
+  <a href="/http/by-url?url={{ current_url | urlencode }}" style="color:var(--accent); font-weight:600">📊 Page dédiée à cette URL</a>
+  <span class="meta" style="color:var(--muted); font-size:12px">(timeline par étape · status strip · per-IP · info TLS)</span>
+</div>
+
 <div class="card">
   <h3 style="margin-top:0">Historique HTTP — {{ current_url }}</h3>
   <canvas id="history" height="100"></canvas>
@@ -35,6 +41,14 @@ fetch("/api/http/url/history?url={{ current_url | urlencode }}").then(r => r.jso
 });
 </script>
 {% endif %}
+
+<form method="get" action="/http/compare" class="card" style="padding:10px 14px; background:#0b1220; border-radius:6px; margin-bottom:12px">
+  Comparer
+  <select name="a">{% for r in runs %}<option value="{{ r.id }}">#{{ r.id }} — {{ r.url }} — {{ r.started_at }}</option>{% endfor %}</select>
+  →
+  <select name="b">{% for r in runs %}<option value="{{ r.id }}">#{{ r.id }} — {{ r.url }} — {{ r.started_at }}</option>{% endfor %}</select>
+  <button type="submit" style="padding:6px 14px; background:var(--accent); color:#020617; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600">Diff</button>
+</form>
 
 <table>
   <thead><tr>
