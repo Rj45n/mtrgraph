@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .. import db, mtr_analysis
+from .. import db, geoip, mtr_analysis
 from ..colors import latency_hex, loss_hex
 from ..compare import diff
 from ..db import proto_label
@@ -179,7 +179,10 @@ def create_router(db_path: Path, templates) -> APIRouter:
         try:
             mtr_analysis.enrich_hops_with_as(db_path, hops)
         except Exception:
-            # Best-effort: AS lookup can fail (no network, rate limit, …)
+            pass
+        try:
+            geoip.enrich_hops_with_geo(db_path, hops)
+        except Exception:
             pass
         return {"run": dict(r), "hops": hops}
 

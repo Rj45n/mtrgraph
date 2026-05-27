@@ -79,6 +79,13 @@
   <div id="asym-content"><em class="meta">Pas encore de données pour cette comparaison.</em></div>
 </div>
 
+<div class="panel" id="geo-panel">
+  <h3>8. Carte géographique des hops</h3>
+  <div class="help">Géolocalisation IP via ipwho.is (cache local). Permet de visualiser le chemin physique parcouru par les paquets. Marqueurs numérotés, ligne reliant les hops dans l'ordre.</div>
+  <div id="geo-map" style="height:400px; border-radius:6px; margin-top:8px; background:#020617"></div>
+  <div id="geo-summary" class="help" style="margin-top:8px"></div>
+</div>
+
 <style>
   .help { font-size:11px; color:var(--muted); margin-bottom:8px }
   .panel { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
@@ -284,6 +291,44 @@ async function loadAsEnriched() {
   el.innerHTML = html;
 }
 
+let geoMap = null;
+async function loadGeo() {
+  const j = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/latest-enriched`).then(r => r.ok ? r.json() : null);
+  const mapEl = document.getElementById('geo-map');
+  const sumEl = document.getElementById('geo-summary');
+  if (!j) { sumEl.textContent = 'Pas de données.'; return; }
+  const geoHops = j.hops.filter(h => h.geo_lat != null && h.geo_lng != null);
+  if (!geoHops.length) {
+    sumEl.innerHTML = '<em>Aucun hop géolocalisable (privé / DNS lookup pending). Recharge la page dans quelques secondes — la 1<sup>re</sup> visite déclenche les lookups async.</em>';
+    return;
+  }
+  // (Re)build map
+  if (!geoMap) {
+    geoMap = L.map('geo-map', { scrollWheelZoom: false });
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18, attribution: '© OpenStreetMap',
+    }).addTo(geoMap);
+  } else {
+    geoMap.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.Polyline) geoMap.removeLayer(l); });
+  }
+  const latlngs = geoHops.map(h => [h.geo_lat, h.geo_lng]);
+  L.polyline(latlngs, { color: '#38bdf8', weight: 3, opacity: 0.7 }).addTo(geoMap);
+  for (const h of geoHops) {
+    const icon = L.divIcon({
+      html: `<div style="background:#0b1220;color:#e2e8f0;border:2px solid #38bdf8;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:11px">${h.hop_index}</div>`,
+      className: '', iconSize: [24,24], iconAnchor: [12,12],
+    });
+    L.marker([h.geo_lat, h.geo_lng], { icon }).addTo(geoMap)
+      .bindPopup(`<strong>hop ${h.hop_index}</strong> ${h.host || '?'}<br>
+                  ${h.geo_city || ''} ${h.geo_country_code ? '('+h.geo_country_code+')' : ''}<br>
+                  ${h.asn ? 'AS'+h.asn+' '+(h.as_name||'') : ''}<br>
+                  avg ${h.avg_ms !== null ? h.avg_ms.toFixed(1)+'ms' : '?'}`);
+  }
+  geoMap.fitBounds(latlngs, { padding: [30,30] });
+  const countries = [...new Set(geoHops.map(h => h.geo_country_code).filter(Boolean))];
+  sumEl.innerHTML = `${geoHops.length} hop(s) géolocalisé(s) sur ${j.hops.length} · pays traversés : ${countries.join(' → ') || '—'}`;
+}
+
 async function loadAsymmetry() {
   const a = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/asymmetry?proto_a=tcp&proto_b=icmp`).then(r => r.ok ? r.json() : null);
   const el = document.getElementById('asym-content');
@@ -315,6 +360,7 @@ async function reloadAll() {
     loadRouteStability(lastN),
     loadAsEnriched(),
     loadAsymmetry(),
+    loadGeo(),
   ]);
 }
 document.getElementById('refresh-btn').addEventListener('click', reloadAll);
