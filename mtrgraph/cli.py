@@ -226,6 +226,64 @@ def cmd_http_daemon(args: argparse.Namespace, console: Console) -> int:
     return 0
 
 
+def cmd_http_tx(args, console):
+    """Run a synthetic HTTP transaction (sequence of steps) and store the result."""
+    import json as _json
+    from .http_transaction import run_transaction
+    # Steps source: --steps-file (path to JSON) or --steps-json (inline JSON)
+    if args.steps_file:
+        steps = _json.loads(Path(args.steps_file).read_text())
+    elif args.steps_json:
+        steps = _json.loads(args.steps_json)
+    else:
+        console.print("[bold red]erreur:[/] --steps-file ou --steps-json requis")
+        return 2
+    if not isinstance(steps, list) or not steps:
+        console.print("[bold red]erreur:[/] steps doit être une liste non-vide")
+        return 2
+    name = args.name or f"tx-{len(steps)}-steps"
+    console.print(f"[cyan]▶ http-tx[/] {name} ({len(steps)} steps)")
+    result = run_transaction(name, steps, timeout=args.timeout)
+    # Persist
+    step_dicts = []
+    for r in result.steps:
+        step_dicts.append({
+            "step_idx": r.step_idx, "method": r.method, "url": r.url,
+            "status": r.sample.status, "ok": r.ok,
+            "dns_ms": r.sample.dns_ms, "tcp_ms": r.sample.tcp_ms,
+            "tls_ms": r.sample.tls_ms, "ttfb_ms": r.sample.ttfb_ms,
+            "total_ms": r.sample.total_ms, "error": r.sample.error,
+            "cookies_received": r.cookies_received,
+        })
+    with db.session(args.db) as conn:
+        run_id = db.insert_tx_run(
+            conn, name=name, label=args.label, total_ms=result.total_ms,
+            steps_count=len(steps), success_count=result.success_count,
+            error_count=result.error_count, definition=steps,
+        )
+        db.insert_tx_steps(conn, run_id, step_dicts)
+    color = "green" if result.all_ok else "red"
+    console.print(
+        f"[bold {color}]{'✓' if result.all_ok else '✗'} tx_run #{run_id}[/] "
+        f"{result.success_count}/{len(steps)} steps OK · {result.total_ms:.0f} ms total"
+    )
+    # Per-step output
+    from rich.table import Table
+    t = Table(title=f"Steps of tx_run #{run_id}", expand=True)
+    t.add_column("#"); t.add_column("Method"); t.add_column("URL", overflow="fold")
+    t.add_column("Status"); t.add_column("Total ms"); t.add_column("Cookies"); t.add_column("OK")
+    for r in result.steps:
+        t.add_row(
+            str(r.step_idx), r.method, r.url[:60],
+            str(r.sample.status or "ERR"),
+            f"{r.sample.total_ms:.0f}" if r.sample.total_ms else "—",
+            ",".join(r.cookies_received) or "—",
+            "[green]✓[/]" if r.ok else f"[red]✗ {r.sample.error or 'unexpected status'}[/]",
+        )
+    console.print(t)
+    return 0 if result.all_ok else 1
+
+
 def cmd_http_list(args: argparse.Namespace, console: Console) -> int:
     with db.session(args.db) as conn:
         runs = db.list_http_runs(conn, url=args.url, limit=args.limit)
@@ -613,6 +671,15 @@ def build_parser() -> argparse.ArgumentParser:
     hd.add_argument("--ip", default=None, help="forcer une IP (garde SNI/Host du hostname)")
     _add_db_arg(hd)
     hd.set_defaults(func=cmd_http_daemon)
+
+    htx = sub.add_parser("http-tx", help="Exécute une transaction synthétique HTTP (steps séquentiels avec cookies)")
+    htx.add_argument("--name", default=None, help="nom du run (sinon auto)")
+    htx.add_argument("--label", default=None)
+    htx.add_argument("--steps-file", default=None, help="chemin vers un fichier JSON contenant la liste des steps")
+    htx.add_argument("--steps-json", default=None, help="JSON inline de la liste des steps")
+    htx.add_argument("-T", "--timeout", type=float, default=10.0)
+    _add_db_arg(htx)
+    htx.set_defaults(func=cmd_http_tx)
 
     hl = sub.add_parser("http-list", help="Liste les http_runs")
     hl.add_argument("--url", default=None)

@@ -40,6 +40,10 @@ class HttpSample:
     # Redirect chain — list of dicts {status, location} if redirects were followed
     redirect_chain: list | None = None
     final_url: str | None = None        # URL after redirect chain (None if no redirect)
+    # Raw response headers (lower-case keyed). NOT persisted in DB, only available
+    # in-process for callers that need them (synthetic transactions, etc.).
+    response_headers: dict | None = None
+    set_cookie_headers: list | None = None   # All Set-Cookie values (multi-value header)
 
 
 def _ms(start: float) -> float:
@@ -55,6 +59,8 @@ def probe_once(
     force_ip: str | None = None,
     follow_redirects: bool = False,
     max_redirects: int = 5,
+    extra_headers: dict | None = None,
+    body: bytes | str | None = None,
     _redirect_chain: list | None = None,
     _depth: int = 0,
 ) -> HttpSample:
@@ -149,18 +155,30 @@ def probe_once(
                                   _ms(overall_start), None, resolved_ip, f"tls: {e}")
 
         # --- HTTP request + TTFB ---
-        req = (
-            f"{method} {path} HTTP/1.1\r\n"
-            f"Host: {host}\r\n"
-            f"User-Agent: {user_agent}\r\n"
-            f"Accept: */*\r\n"
-            f"Connection: close\r\n\r\n"
-        )
+        body_bytes = b""
+        if body is not None:
+            body_bytes = body.encode("utf-8") if isinstance(body, str) else body
+        lines = [
+            f"{method} {path} HTTP/1.1",
+            f"Host: {host}",
+            f"User-Agent: {user_agent}",
+            "Accept: */*",
+            "Connection: close",
+        ]
+        if body_bytes:
+            lines.append(f"Content-Length: {len(body_bytes)}")
+        if extra_headers:
+            for k, v in extra_headers.items():
+                # Skip headers we already control
+                if k.lower() in ("host", "user-agent", "connection", "content-length"):
+                    continue
+                lines.append(f"{k}: {v}")
+        req = "\r\n".join(lines) + "\r\n\r\n"
         # ── Send request + read response (status line + headers) ──
         resp_headers: dict[str, str] = {}
         try:
             t0 = time.monotonic()
-            ssock.sendall(req.encode("ascii"))
+            ssock.sendall(req.encode("ascii") + body_bytes)
             first = ssock.recv(1)
             ttfb_ms = _ms(t0)
             if not first:
@@ -180,12 +198,16 @@ def probe_once(
             status_line = lines[0].decode("iso-8859-1", "replace")
             parts = status_line.split(" ", 2)
             status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
+            set_cookies: list[str] = []
             for line in lines[1:]:
                 if b":" in line:
                     k, _, v = line.partition(b":")
-                    resp_headers[k.decode("ascii", "replace").lower().strip()] = (
-                        v.decode("iso-8859-1", "replace").strip()
-                    )
+                    name = k.decode("ascii", "replace").lower().strip()
+                    val = v.decode("iso-8859-1", "replace").strip()
+                    if name == "set-cookie":
+                        set_cookies.append(val)
+                    else:
+                        resp_headers[name] = val
         except (socket.timeout, OSError) as e:
             return HttpSample(sample_idx, dns_ms, tcp_ms, tls_ms, None,
                               _ms(overall_start), None, resolved_ip, f"http: {e}")
@@ -210,6 +232,8 @@ def probe_once(
             content_encoding=resp_headers.get("content-encoding"),
             server=resp_headers.get("server"),
             cache_status=resp_headers.get("x-cache") or resp_headers.get("cf-cache-status"),
+            response_headers=resp_headers,
+            set_cookie_headers=set_cookies or None,
         )
 
         # ── Follow redirects if asked and status is 3xx + has Location ──

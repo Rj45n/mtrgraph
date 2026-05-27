@@ -137,6 +137,34 @@ CREATE TABLE IF NOT EXISTS s3_runs (
 CREATE INDEX IF NOT EXISTS idx_s3_runs_endpoint_started ON s3_runs(endpoint, started_at);
 CREATE INDEX IF NOT EXISTS idx_s3_runs_op_started ON s3_runs(operation, started_at);
 
+CREATE TABLE IF NOT EXISTS http_tx_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    label TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    total_ms REAL,
+    steps_count INTEGER,
+    success_count INTEGER,
+    error_count INTEGER,
+    definition_json TEXT     -- snapshot of the steps for traceability
+);
+CREATE INDEX IF NOT EXISTS idx_http_tx_runs_name_started ON http_tx_runs(name, started_at);
+
+CREATE TABLE IF NOT EXISTS http_tx_steps (
+    run_id INTEGER NOT NULL REFERENCES http_tx_runs(id) ON DELETE CASCADE,
+    step_idx INTEGER NOT NULL,
+    method TEXT,
+    url TEXT,
+    status INTEGER,
+    ok INTEGER,
+    dns_ms REAL, tcp_ms REAL, tls_ms REAL, ttfb_ms REAL, total_ms REAL,
+    error TEXT,
+    cookies_set TEXT,        -- comma-separated cookie names
+    PRIMARY KEY (run_id, step_idx)
+);
+CREATE INDEX IF NOT EXISTS idx_http_tx_steps_run ON http_tx_steps(run_id);
+
 CREATE TABLE IF NOT EXISTS http_samples (
     run_id INTEGER NOT NULL REFERENCES http_runs(id) ON DELETE CASCADE,
     sample_idx INTEGER NOT NULL,
@@ -232,4 +260,7 @@ from .tcp import insert_tcp_sample, list_tcp_samples  # noqa: E402
 from .schedules import (  # noqa: E402
     list_schedules, get_schedule, insert_schedule, update_schedule,
     delete_schedule, due_schedules,
+)
+from .transactions import (  # noqa: E402
+    insert_tx_run, insert_tx_steps, list_tx_runs, get_tx_run, get_tx_steps,
 )
