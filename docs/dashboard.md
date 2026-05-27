@@ -1,5 +1,8 @@
 # Dashboard — vision unifiée par endpoint
 
+> Pour la signification précise de **chaque métrique** affichée (apdex, jitter, server_processing_ms, OutSegs/s, etc.), voir [metrics-reference.md](metrics-reference.md).
+
+
 Page `/dashboard` qui réunit MTR + HTTP/S3 sur une seule timeline pour analyser un endpoint en un coup d'œil.
 
 ```bash

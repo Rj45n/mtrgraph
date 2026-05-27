@@ -49,6 +49,7 @@ Walkthrough complet : [docs/getting-started.md](docs/getting-started.md).
 | [docs/dashboard.md](docs/dashboard.md)               | **Dashboard analyse** (KPIs + 7 charts unifiés) |
 | [docs/s3-bench.md](docs/s3-bench.md)                 | **Benchmark débit S3** concurrent (`s3-bench`)  |
 | [docs/retention.md](docs/retention.md)               | **Gestion DB long terme** : WAL, retention auto, sizing |
+| [docs/metrics-reference.md](docs/metrics-reference.md) | **Référence de toutes les métriques** (MTR / HTTP / S3 / TCP / KPIs) et leur sens |
 | [docs/commands.md](docs/commands.md)                 | Référence de toutes les sous-commandes          |
 | [docs/web.md](docs/web.md)                           | Endpoints HTTP, templates, API JSON             |
 | [docs/db-schema.md](docs/db-schema.md)               | Schéma SQLite + requêtes utiles                 |

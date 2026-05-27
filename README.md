@@ -70,6 +70,7 @@ Most documentation is in French. Translation to English is in progress.
 | [docs/dashboard.md](docs/dashboard.md)               | **Analysis dashboard** (KPIs + 7 unified charts) |
 | [docs/s3-bench.md](docs/s3-bench.md)                 | **Concurrent S3 throughput benchmark**           |
 | [docs/retention.md](docs/retention.md)               | **Long-term DB management**: WAL, auto-retention, sizing |
+| [docs/metrics-reference.md](docs/metrics-reference.md) | **Reference of every metric** (MTR / HTTP / S3 / TCP / KPIs) and how to read it |
 | [docs/commands.md](docs/commands.md)                 | Reference of all CLI sub-commands                |
 | [docs/web.md](docs/web.md)                           | HTTP endpoints, templates, JSON API              |
 | [docs/db-schema.md](docs/db-schema.md)               | SQLite schema + useful queries                   |
