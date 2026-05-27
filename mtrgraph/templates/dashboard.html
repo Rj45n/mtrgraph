@@ -23,6 +23,18 @@
   table.compact td, table.compact th { padding:5px 8px }
   .ip-bad { background:#7f1d1d; color:#fee2e2 }
   .ip-warn { background:#7c2d12; color:#fed7aa }
+  .trend-arrow { font-size:13px; margin-left:4px }
+  .trend-up { color:var(--red) }
+  .trend-down { color:var(--green) }
+  .trend-flat { color:var(--muted) }
+  .burst-banner { background:#7f1d1d; color:#fee2e2; padding:12px 16px; border-radius:6px; border-left:4px solid var(--red); margin-bottom:14px; font-size:14px; animation:pulse 2s infinite }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,.4) } 50% { box-shadow: 0 0 0 8px rgba(220,38,38,0) } }
+  .failure-bar { display:flex; height:24px; border-radius:4px; overflow:hidden; margin:8px 0 }
+  .failure-bar > div { display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; color:#020617 }
+  .heatmap { display:grid; grid-template-columns: 50px repeat(24, 1fr); gap:2px; font-size:10px }
+  .heatmap .h-label { color:var(--muted); text-align:center; line-height:22px; font-size:9px }
+  .heatmap .h-cell { height:22px; border-radius:2px; cursor:default; display:flex; align-items:center; justify-content:center; font-size:9px; color:#020617; font-weight:600 }
+  .heatmap .h-day { color:var(--muted); padding-right:4px; text-align:right; line-height:22px; font-size:11px; font-weight:600 }
 </style>
 
 <h2>Dashboard analyse — vision globale par endpoint</h2>
@@ -197,17 +209,57 @@ function render(rows, kpis) {
   // KPI tiles
   const errCls = kpis.err_pct >= 10 ? 'red' : kpis.err_pct >= 1 ? 'yellow' : 'green';
   const p95Cls = kpis.p95_total_ms >= 2500 ? 'red' : kpis.p95_total_ms >= 800 ? 'yellow' : 'green';
+  const apdex = kpis.apdex;
+  const apdexCls = apdex === null ? '' : apdex >= 0.94 ? 'green' : apdex >= 0.85 ? '' : apdex >= 0.70 ? 'yellow' : 'red';
+  const apdexLabel = apdex === null ? '—' : apdex.toFixed(2);
+  const jitterTtfb = kpis.jitter_ttfb_ms;
+  const jitterCls = jitterTtfb === null ? '' : jitterTtfb >= 200 ? 'red' : jitterTtfb >= 50 ? 'yellow' : 'green';
 
-  el.innerHTML = `
+  function trendIcon(t) {
+    if (!t || t.direction === 'unknown' || t.delta_pct === null) return '<span class="trend-arrow trend-flat">—</span>';
+    const arrow = t.direction === 'up' ? '↗' : t.direction === 'down' ? '↘' : '→';
+    const cls = t.direction === 'up' ? 'trend-up' : t.direction === 'down' ? 'trend-down' : 'trend-flat';
+    const sign = t.delta_pct >= 0 ? '+' : '';
+    return `<span class="trend-arrow ${cls}" title="vs same period: ${t.past?.toFixed(0) || '?'}ms">${arrow} ${sign}${t.delta_pct.toFixed(0)}%</span>`;
+  }
+
+  // Burst banner (if detected)
+  const burstHTML = kpis.burst ? `
+    <div class="burst-banner">
+      🚨 <strong>Burst d'erreurs détecté</strong> — ${kpis.burst.count} erreurs en ${kpis.burst.window_s}s
+      (entre ${kpis.burst.first_at.replace('T',' ').slice(5,19)} et ${kpis.burst.last_at.replace('T',' ').slice(5,19)})
+    </div>` : '';
+
+  // MTTR sub-text
+  const mttrText = kpis.mttr && kpis.mttr.events > 0
+    ? `${kpis.mttr.events} dégradations, récupération moy. ${(kpis.mttr.avg_recovery_s/60).toFixed(1)}min${kpis.mttr.ongoing ? ' (en cours)' : ''}`
+    : kpis.mttr?.ongoing ? 'dégradation en cours' : 'pas de dégradation';
+
+  el.innerHTML = burstHTML + `
     <div class="kpis">
       <div class="kpi"><div class="lab">Runs</div><div class="val">${kpis.count}</div><div class="sub">${ips.length} IP(s)</div></div>
       <div class="kpi ${errCls}"><div class="lab">Erreurs</div><div class="val">${kpis.err_pct}%</div><div class="sub">${kpis.err_count} / ${kpis.count}</div></div>
+      <div class="kpi ${apdexCls}"><div class="lab">Apdex</div><div class="val">${apdexLabel}</div><div class="sub">target ${kpis.apdex_target_ms}ms</div></div>
       <div class="kpi"><div class="lab">Avg Total</div><div class="val">${fmtMs(kpis.avg_total_ms)}</div></div>
       <div class="kpi"><div class="lab">P50 Total</div><div class="val">${fmtMs(kpis.p50_total_ms)}</div></div>
-      <div class="kpi ${p95Cls}"><div class="lab">P95 Total</div><div class="val">${fmtMs(kpis.p95_total_ms)}</div></div>
+      <div class="kpi ${p95Cls}"><div class="lab">P95 Total ${trendIcon(kpis.trend_24h)}</div><div class="val">${fmtMs(kpis.p95_total_ms)}</div><div class="sub">7d ${trendIcon(kpis.trend_7d)}</div></div>
       <div class="kpi"><div class="lab">P99 Total</div><div class="val">${fmtMs(kpis.p99_total_ms)}</div></div>
       <div class="kpi"><div class="lab">Avg TTFB</div><div class="val">${fmtMs(kpis.avg_ttfb_ms)}</div></div>
       <div class="kpi"><div class="lab">P95 TTFB</div><div class="val">${fmtMs(kpis.p95_ttfb_ms)}</div></div>
+      <div class="kpi ${jitterCls}"><div class="lab">Jitter TTFB (σ)</div><div class="val">${fmtMs(jitterTtfb)}</div><div class="sub">variabilité</div></div>
+      <div class="kpi"><div class="lab">MTTR</div><div class="val" style="font-size:14px;line-height:24px">${kpis.mttr?.avg_recovery_s ? (kpis.mttr.avg_recovery_s/60).toFixed(1)+' min' : '—'}</div><div class="sub">${mttrText}</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>Distribution des modes d'échec</h3>
+      <div class="help">${kpis.err_count} échec(s) sur ${kpis.count} runs. Sépare les causes : DNS / TCP / TLS / HTTP 4xx / HTTP 5xx / autre.</div>
+      <div id="failure-modes-bar"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Heatmap jour × heure (avg Total ms)</h3>
+      <div class="help">Repère les patterns temporels : "ça rame le lundi à 14h" saute aux yeux. Cellules vides = pas de runs sur ce créneau.</div>
+      <div id="heatmap-grid" style="overflow-x:auto"></div>
     </div>
 
     <div class="panel">
@@ -277,6 +329,10 @@ function render(rows, kpis) {
     </div>
   `;
 
+  // Render the new failure modes bar + heatmap
+  renderFailureModes(kpis.failure_modes || {});
+  renderHeatmap();
+
   // Chart 1: stacked stages over time
   chart('ch-stages', {
     type:'line',
@@ -311,14 +367,20 @@ function render(rows, kpis) {
     options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'} }, x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} } }, plugins:{ legend:{labels:{color:'#e2e8f0'}}} }
   });
 
-  // Chart 4: throughput
+  // Chart 4: throughput + transfer time (GET-only)
   const tpRows = rows.map(r => r.throughput_mbps);
+  const transferRows = rows.map(r => r.transfer_ms);
   chart('ch-throughput', {
     type:'line',
     data:{ labels, datasets:[
-      { label:'Throughput', data: tpRows, borderColor:'#34d399', backgroundColor:'rgba(52,211,153,.2)', tension:.2, fill:true, spanGaps:false },
+      { label:'Throughput (MB/s)', data: tpRows, borderColor:'#34d399', backgroundColor:'rgba(52,211,153,.2)', tension:.2, fill:true, spanGaps:false, yAxisID:'y' },
+      { label:'Transfer time (ms, GET only)', data: transferRows, borderColor:'#fbbf24', tension:.2, fill:false, borderDash:[6,3], spanGaps:false, yAxisID:'y1' },
     ]},
-    options:{ responsive:true, scales:{ y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'MB/s', color:'#94a3b8'} }, x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} } }, plugins:{ legend:{labels:{color:'#e2e8f0'}}} }
+    options:{ responsive:true, scales:{
+      y:{ position:'left', ticks:{color:'#94a3b8'}, title:{display:true,text:'MB/s', color:'#94a3b8'} },
+      y1:{ position:'right', ticks:{color:'#94a3b8'}, title:{display:true,text:'ms transfer', color:'#94a3b8'}, grid:{drawOnChartArea:false} },
+      x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:20} }
+    }, plugins:{ legend:{labels:{color:'#e2e8f0'}}} }
   });
 
   // Chart 5: status — constant-height bars colored by status type
@@ -412,6 +474,79 @@ async function renderErrors() {
       }).join('')}
       </tbody>
     </table>`;
+}
+
+function renderFailureModes(modes) {
+  const el = document.getElementById('failure-modes-bar');
+  if (!el) return;
+  const total = Object.values(modes).reduce((a,b)=>a+b, 0) || 1;
+  const palette = {
+    ok: '#16a34a', http_4xx: '#eab308', http_5xx: '#dc2626',
+    dns_error: '#a78bfa', tcp_error: '#22d3ee', tls_error: '#f472b6',
+    http_error: '#fb923c', other_error: '#7c2d12',
+  };
+  const labels = {
+    ok: 'OK', http_4xx: '4xx', http_5xx: '5xx',
+    dns_error: 'DNS', tcp_error: 'TCP', tls_error: 'TLS',
+    http_error: 'HTTP', other_error: 'autre',
+  };
+  const segments = Object.entries(modes)
+    .filter(([k,v]) => v > 0)
+    .sort((a,b) => b[1] - a[1])
+    .map(([k,v]) => {
+      const pct = (v / total * 100).toFixed(1);
+      const label = pct >= 5 ? `${labels[k]} ${pct}%` : '';
+      return `<div style="width:${pct}%;background:${palette[k] || '#666'}" title="${labels[k]}: ${v} (${pct}%)">${label}</div>`;
+    });
+  el.innerHTML = `<div class="failure-bar">${segments.join('')}</div>`;
+}
+
+async function renderHeatmap() {
+  const f = currentFilter();
+  if (!f.endpoint) return;
+  const h = await fetch('/api/dashboard/heatmap?' + qs(f)).then(r => r.json());
+  const el = document.getElementById('heatmap-grid');
+  if (!el) return;
+  // Find max for color scaling
+  let max = 0;
+  for (const row of h.data) for (const v of row) if (v !== null && v > max) max = v;
+  function colorFor(v) {
+    if (v === null) return '#0b1220';
+    if (max === 0) return '#16a34a';
+    const ratio = Math.min(1, v / max);
+    // green → yellow → red gradient
+    if (ratio < 0.5) {
+      // green to yellow
+      const r = Math.round(22 + (234-22) * ratio * 2);
+      const g = Math.round(163 - (163-179) * ratio * 2);
+      const b = Math.round(74 - (74-8) * ratio * 2);
+      return `rgb(${r},${g},${b})`;
+    } else {
+      // yellow to red
+      const t = (ratio - 0.5) * 2;
+      const r = Math.round(234 - (234-220) * t);
+      const g = Math.round(179 - (179-38) * t);
+      const b = Math.round(8 + (38-8) * t);
+      return `rgb(${r},${g},${b})`;
+    }
+  }
+  let html = '<div class="heatmap">';
+  // Header row: empty + hours
+  html += '<div class="h-label"></div>';
+  for (let hr = 0; hr < 24; hr++) html += `<div class="h-label">${String(hr).padStart(2,'0')}</div>`;
+  // Day rows
+  for (let d = 0; d < 7; d++) {
+    html += `<div class="h-day">${h.days[d]}</div>`;
+    for (let hr = 0; hr < 24; hr++) {
+      const v = h.data[d][hr];
+      const c = h.count[d][hr];
+      const txt = v === null ? '' : Math.round(v);
+      html += `<div class="h-cell" style="background:${colorFor(v)}" title="${h.days[d]} ${String(hr).padStart(2,'0')}h: ${v===null?'pas de runs':`${v.toFixed(0)}ms avg (${c} runs)`}">${txt}</div>`;
+    }
+  }
+  html += '</div>';
+  html += `<div style="font-size:11px;color:var(--muted);margin-top:8px">Échelle 0 (vert) → ${max.toFixed(0)}ms (rouge). ${max === 0 ? 'Pas encore assez de données.' : ''}</div>`;
+  el.innerHTML = html;
 }
 
 async function renderTcp() {
