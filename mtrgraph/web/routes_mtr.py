@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .. import db
+from .. import db, mtr_analysis
 from ..colors import latency_hex, loss_hex
 from ..compare import diff
 from ..db import proto_label
@@ -162,6 +162,53 @@ def create_router(db_path: Path, templates) -> APIRouter:
         """Per-hop loss heatmap (matrix hop × time)."""
         with db.session(db_path) as conn:
             return db.hop_matrix(conn, target, metric="loss_pct", last_n=last_n)
+
+    @router.get("/api/mtr/target/{target}/latest-enriched")
+    def api_mtr_target_latest_enriched(target: str):
+        """Latest run with each hop enriched with ASN / AS name / country
+        from the on-disk team-cymru cache."""
+        with db.session(db_path) as conn:
+            runs = conn.execute(
+                "SELECT * FROM runs WHERE target=? ORDER BY started_at DESC LIMIT 1",
+                (target,),
+            ).fetchall()
+            if not runs:
+                raise HTTPException(404)
+            r = runs[0]
+            hops = [dict(h) for h in db.get_hops(conn, r["id"])]
+        try:
+            mtr_analysis.enrich_hops_with_as(db_path, hops)
+        except Exception:
+            # Best-effort: AS lookup can fail (no network, rate limit, …)
+            pass
+        return {"run": dict(r), "hops": hops}
+
+    @router.get("/api/mtr/target/{target}/asymmetry")
+    def api_mtr_target_asymmetry(target: str, proto_a: str = "tcp", proto_b: str = "icmp",
+                                   last_n: int = 5):
+        """Compare the most recent N runs of proto_a vs proto_b on `target`."""
+        with db.session(db_path) as conn:
+            def _runs(proto):
+                rows = conn.execute(
+                    "SELECT * FROM runs WHERE target=? AND protocol=? ORDER BY started_at DESC LIMIT ?",
+                    (target, proto, last_n),
+                ).fetchall()
+                out = []
+                for r in rows:
+                    hops = conn.execute(
+                        "SELECT * FROM hops WHERE run_id=? ORDER BY hop_index", (r["id"],),
+                    ).fetchall()
+                    d = dict(r)
+                    d["hops"] = [dict(h) for h in hops]
+                    out.append(d)
+                return out
+            runs_a = _runs(proto_a)
+            runs_b = _runs(proto_b)
+        return {
+            "proto_a": proto_a, "proto_b": proto_b,
+            "runs_a_count": len(runs_a), "runs_b_count": len(runs_b),
+            **mtr_analysis.asymmetry_score(runs_a, runs_b),
+        }
 
     @router.get("/api/mtr/target/{target}/latest")
     def api_mtr_target_latest(target: str):

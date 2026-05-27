@@ -67,6 +67,18 @@
   <div id="rs-events"></div>
 </div>
 
+<div class="panel" id="as-panel">
+  <h3>6. Chemin enrichi par AS (lookup whois.cymru.com, mis en cache)</h3>
+  <div class="help">Chaque hop est annoté avec son AS (numéro + nom) et son code pays. Si un AS change entre deux runs, c'est ton opérateur qui a changé son routage. Lookup async la 1<sup>re</sup> fois (peut prendre ~1s), instantané ensuite.</div>
+  <div id="as-content"><em class="meta">Chargement…</em></div>
+</div>
+
+<div class="panel" id="asym-panel">
+  <h3>7. Asymétrie de routage (ICMP vs TCP)</h3>
+  <div class="help">Compare le chemin emprunté par les probes ICMP vs TCP vers la même cible. Score 0 = chemins identiques, 1 = complètement divergents. Utile pour détecter du routing asymétrique (sources de fausses alarmes sur les pertes).</div>
+  <div id="asym-content"><em class="meta">Pas encore de données pour cette comparaison.</em></div>
+</div>
+
 <style>
   .help { font-size:11px; color:var(--muted); margin-bottom:8px }
   .panel { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
@@ -239,6 +251,61 @@ async function loadRouteStability(lastN) {
   </table>`;
 }
 
+async function loadAsEnriched() {
+  const j = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/latest-enriched`).then(r => r.ok ? r.json() : null);
+  const el = document.getElementById('as-content');
+  if (!j) { el.innerHTML = '<em class="meta">Pas de données.</em>'; return; }
+  // Group consecutive hops by ASN
+  const groups = [];
+  let cur = null;
+  for (const h of j.hops) {
+    if ((h.loss_pct || 0) >= 100) continue;
+    const key = h.asn || 'unknown';
+    if (cur && cur.asn === key) {
+      cur.hops.push(h);
+    } else {
+      cur = { asn: key, as_name: h.as_name || (h.asn ? '' : 'private/loopback'), country: h.country || '—', hops: [h] };
+      groups.push(cur);
+    }
+  }
+  let html = '<div style="display:flex; flex-direction:column; gap:8px">';
+  for (const g of groups) {
+    const flag = g.country && g.country !== '—' ? `<span style="margin-right:6px">${g.country}</span>` : '';
+    const asLbl = g.asn === 'unknown' ? '<span style="color:var(--muted)">unknown AS</span>'
+                                       : `<strong>AS${g.asn}</strong> ${g.as_name}`;
+    html += `<div style="background:#0b1220; padding:8px 10px; border-radius:4px; border-left:3px solid var(--accent)">
+      <div style="font-size:12px; color:var(--muted)">${flag}${asLbl} <span style="margin-left:8px">${g.hops.length} hop(s)</span></div>
+      <div style="font-family:monospace; font-size:11px; margin-top:4px">
+        ${g.hops.map(h => `<span style="margin-right:12px">${h.hop_index}: ${h.host || '?'} <span style="color:var(--muted)">(${h.avg_ms !== null ? h.avg_ms.toFixed(1)+'ms' : '?'})</span></span>`).join('')}
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function loadAsymmetry() {
+  const a = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/asymmetry?proto_a=tcp&proto_b=icmp`).then(r => r.ok ? r.json() : null);
+  const el = document.getElementById('asym-content');
+  if (!a || a.score === null) {
+    el.innerHTML = `<div class="help">Besoin d'au moins 1 run en <strong>${a?.proto_a || 'tcp'}</strong> ET 1 run en <strong>${a?.proto_b || 'icmp'}</strong> sur cette cible. Crée 2 schedules MTR avec des protos différents et reviens.</div>`;
+    return;
+  }
+  const sevColor = a.score >= 0.5 ? 'var(--red)' : a.score >= 0.2 ? 'var(--yellow)' : 'var(--green)';
+  let html = `<div style="font-size:14px; margin-bottom:10px">
+    Score divergence : <strong style="color:${sevColor}">${(a.score * 100).toFixed(0)}%</strong>
+    · ${a.common_hops} hops identiques · ${a.divergent_hops} divergents
+    · ${a.proto_a}: ${a.hops_a} hops · ${a.proto_b}: ${a.hops_b} hops
+  </div>`;
+  html += `<table class="compact" style="font-size:11px"><thead><tr><th>#</th><th>${a.proto_a.toUpperCase()}</th><th>${a.proto_b.toUpperCase()}</th><th>Statut</th></tr></thead><tbody>`;
+  for (const d of a.details) {
+    const c = d.status === 'same' ? 'var(--green)' : 'var(--yellow)';
+    html += `<tr><td>${d.hop_index}</td><td>${d.a_host || '—'}</td><td>${d.b_host || '—'}</td><td style="color:${c}">${d.status}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
 async function reloadAll() {
   const lastN = parseInt(document.getElementById('f-last-n').value || '100');
   await Promise.all([
@@ -246,6 +313,8 @@ async function reloadAll() {
     loadLossHeatmap(lastN),
     loadTopologyAndContribution(),
     loadRouteStability(lastN),
+    loadAsEnriched(),
+    loadAsymmetry(),
   ]);
 }
 document.getElementById('refresh-btn').addEventListener('click', reloadAll);
