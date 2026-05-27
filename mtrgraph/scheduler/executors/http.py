@@ -14,10 +14,12 @@ def execute(config: dict) -> tuple[list, str, int, str | None]:
     count = int(config.get("count", 5))
     timeout = float(config.get("timeout", 10.0))
     force_ip = config.get("ip") or None
+    follow_redirects = bool(config.get("follow_redirects", False))
 
     samples = http_probe_many(
         url, count=count, method=method, timeout=timeout,
         interval=min(0.5, 2.0), force_ip=force_ip,
+        follow_redirects=follow_redirects,
     )
     agg = http_aggregate(samples)
     summary = http_status_summary(agg["status_counts"])

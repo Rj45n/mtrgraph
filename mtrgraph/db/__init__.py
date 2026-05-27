@@ -184,6 +184,14 @@ def init_db(path: Path = DEFAULT_DB) -> None:
         _migrate_add_column(conn, "http_runs", "cert_issuer_cn", "TEXT")
         _migrate_add_column(conn, "http_runs", "cert_not_after", "TEXT")
         _migrate_add_column(conn, "http_runs", "cert_san_count", "INTEGER")
+        # Tier 2 capture: response headers + body size + redirect chain
+        _migrate_add_column(conn, "http_runs", "content_length", "INTEGER")
+        _migrate_add_column(conn, "http_runs", "content_type", "TEXT")
+        _migrate_add_column(conn, "http_runs", "content_encoding", "TEXT")
+        _migrate_add_column(conn, "http_runs", "server_header", "TEXT")
+        _migrate_add_column(conn, "http_runs", "cache_status", "TEXT")
+        _migrate_add_column(conn, "http_runs", "redirect_chain_json", "TEXT")
+        _migrate_add_column(conn, "http_runs", "final_url", "TEXT")
 
 
 @contextmanager
@@ -211,7 +219,7 @@ from .mtr import (  # noqa: E402
 from .http_runs import (  # noqa: E402
     insert_http_run, finalize_http_run, insert_http_samples,
     list_http_runs, get_http_run, get_http_samples, delete_http_run,
-    http_baseline, tls_meta_from_samples,
+    http_baseline, tls_meta_from_samples, response_meta_from_samples,
 )
 from .s3 import (  # noqa: E402
     insert_s3_run, list_s3_runs, get_s3_run, delete_s3_run, s3_baseline,

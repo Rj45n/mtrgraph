@@ -82,11 +82,12 @@ def _run_schedule(row, db_path: Path, log_fn) -> None:
         elif kind == "http":
             samples, summary, errors, resolved_ip = exec_http.execute(config)
             tls_meta = db.tls_meta_from_samples(samples)
+            response_meta = db.response_meta_from_samples(samples)
             with db.session(db_path) as conn:
                 run_id = db.insert_http_run(
                     conn, config["url"], config.get("method", "HEAD"), len(samples),
                     config.get("label", "scheduled"), resolved_ip, summary, errors,
-                    tls_meta=tls_meta,
+                    tls_meta=tls_meta, response_meta=response_meta,
                 )
                 db.insert_http_samples(conn, run_id, samples)
                 db.finalize_http_run(conn, run_id)

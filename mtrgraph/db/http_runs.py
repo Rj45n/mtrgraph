@@ -15,21 +15,38 @@ def insert_http_run(
     status_summary: str | None,
     errors: int,
     tls_meta: dict | None = None,
+    response_meta: dict | None = None,
 ) -> int:
-    """Insert an http_run. `tls_meta` (optional) carries TLS metadata captured
-    from the first successful sample (tls_version, tls_cipher, cert_*)."""
+    """Insert an http_run.
+
+    - `tls_meta` carries TLS data captured from the first successful sample
+      (tls_version, tls_cipher, cert_*).
+    - `response_meta` carries response headers info (content_length,
+      content_type, content_encoding, server_header, cache_status,
+      redirect_chain_json, final_url) captured from the first successful sample.
+    """
+    import json as _json
     m = tls_meta or {}
+    r = response_meta or {}
+    chain = r.get("redirect_chain")
     cur = conn.execute(
         """INSERT INTO http_runs(url, method, label, samples, started_at, resolved_ip,
                                  status_summary, errors,
                                  tls_version, tls_cipher, cert_subject_cn,
-                                 cert_issuer_cn, cert_not_after, cert_san_count)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 cert_issuer_cn, cert_not_after, cert_san_count,
+                                 content_length, content_type, content_encoding,
+                                 server_header, cache_status,
+                                 redirect_chain_json, final_url)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (url, method, label, samples,
          datetime.now(timezone.utc).isoformat(timespec="seconds"),
          resolved_ip, status_summary, errors,
          m.get("tls_version"), m.get("tls_cipher"), m.get("cert_subject_cn"),
-         m.get("cert_issuer_cn"), m.get("cert_not_after"), m.get("cert_san_count")),
+         m.get("cert_issuer_cn"), m.get("cert_not_after"), m.get("cert_san_count"),
+         r.get("content_length"), r.get("content_type"), r.get("content_encoding"),
+         r.get("server"), r.get("cache_status"),
+         _json.dumps(chain) if chain else None,
+         r.get("final_url")),
     )
     return cur.lastrowid
 
@@ -46,6 +63,24 @@ def tls_meta_from_samples(samples: list) -> dict:
                 "cert_issuer_cn": getattr(s, "cert_issuer_cn", None),
                 "cert_not_after": getattr(s, "cert_not_after", None),
                 "cert_san_count": getattr(s, "cert_san_count", None),
+            }
+    return {}
+
+
+def response_meta_from_samples(samples: list) -> dict:
+    """Pull response metadata (headers, body, redirects) from the first
+    successful sample (status 2xx/3xx)."""
+    for s in samples:
+        status = getattr(s, "status", None)
+        if status is not None and 200 <= status < 400:
+            return {
+                "content_length": getattr(s, "content_length", None),
+                "content_type": getattr(s, "content_type", None),
+                "content_encoding": getattr(s, "content_encoding", None),
+                "server": getattr(s, "server", None),
+                "cache_status": getattr(s, "cache_status", None),
+                "redirect_chain": getattr(s, "redirect_chain", None),
+                "final_url": getattr(s, "final_url", None),
             }
     return {}
 

@@ -22,6 +22,32 @@
 </div>
 {% endif %}
 
+{% if run.content_type or run.content_length is not none or run.server_header or run.cache_status %}
+<div class="card" style="background:#0b1220; padding:10px 14px; border-radius:6px; margin-top:10px; border-left:3px solid #34d399">
+  <div style="font-size:11px; color:var(--muted); text-transform:uppercase">Réponse HTTP</div>
+  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:6px; font-size:13px; font-family:monospace">
+    {% if run.content_type %}<span>Content-Type: <strong>{{ run.content_type }}</strong></span>{% endif %}
+    {% if run.content_length is not none %}<span>Content-Length: <strong>{{ run.content_length }}</strong> bytes</span>{% endif %}
+    {% if run.content_encoding %}<span>Encoding: <strong>{{ run.content_encoding }}</strong></span>{% endif %}
+    {% if run.server_header %}<span>Server: <strong>{{ run.server_header }}</strong></span>{% endif %}
+    {% if run.cache_status %}<span>X-Cache: <strong style="color:{% if run.cache_status.upper().startswith('HIT') %}#16a34a{% else %}#eab308{% endif %}">{{ run.cache_status }}</strong></span>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if run.redirect_chain_json %}
+<div class="card" style="background:#0b1220; padding:10px 14px; border-radius:6px; margin-top:10px; border-left:3px solid #f59e0b">
+  <div style="font-size:11px; color:var(--muted); text-transform:uppercase">Redirect chain</div>
+  <div style="font-family:monospace; font-size:12px; margin-top:6px">
+    {{ run.url }}
+    {% for step in run.redirect_chain_json|fromjson %}
+       <span style="color:var(--muted)">→ {{ step.status }} →</span> {{ step.location }}
+    {% endfor %}
+    {% if run.final_url %}<div style="color:var(--muted); margin-top:4px">final: <strong style="color:var(--fg)">{{ run.final_url }}</strong></div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="grid2" style="margin-top:14px">
   <div class="card"><canvas id="stages" height="200"></canvas></div>
   <div class="card"><canvas id="ttfb" height="200"></canvas></div>

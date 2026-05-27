@@ -31,6 +31,15 @@ class HttpSample:
     cert_issuer_cn: str | None = None
     cert_not_after: str | None = None
     cert_san_count: int | None = None
+    # Response metadata captured from headers
+    content_length: int | None = None
+    content_type: str | None = None
+    content_encoding: str | None = None
+    server: str | None = None
+    cache_status: str | None = None     # X-Cache header (HIT/MISS) — common in CDNs
+    # Redirect chain — list of dicts {status, location} if redirects were followed
+    redirect_chain: list | None = None
+    final_url: str | None = None        # URL after redirect chain (None if no redirect)
 
 
 def _ms(start: float) -> float:
@@ -44,6 +53,10 @@ def probe_once(
     sample_idx: int = 0,
     user_agent: str = "mtrgraph/0.1",
     force_ip: str | None = None,
+    follow_redirects: bool = False,
+    max_redirects: int = 5,
+    _redirect_chain: list | None = None,
+    _depth: int = 0,
 ) -> HttpSample:
     """Single HTTP probe. Returns timings in milliseconds.
 
@@ -143,6 +156,8 @@ def probe_once(
             f"Accept: */*\r\n"
             f"Connection: close\r\n\r\n"
         )
+        # ── Send request + read response (status line + headers) ──
+        resp_headers: dict[str, str] = {}
         try:
             t0 = time.monotonic()
             ssock.sendall(req.encode("ascii"))
@@ -153,20 +168,35 @@ def probe_once(
                                   _ms(overall_start), None, resolved_ip,
                                   "empty response")
             buf = bytearray(first)
-            # Read just enough to grab the status line
-            while b"\r\n" not in buf and len(buf) < 1024:
-                chunk = ssock.recv(512)
+            # Read until end of headers (CRLFCRLF) or 32 KB
+            while b"\r\n\r\n" not in buf and len(buf) < 32768:
+                chunk = ssock.recv(4096)
                 if not chunk:
                     break
                 buf.extend(chunk)
-            status_line = bytes(buf).split(b"\r\n", 1)[0].decode("iso-8859-1", "replace")
+            head_end = buf.find(b"\r\n\r\n")
+            head_bytes = bytes(buf[:head_end] if head_end >= 0 else buf)
+            lines = head_bytes.split(b"\r\n")
+            status_line = lines[0].decode("iso-8859-1", "replace")
             parts = status_line.split(" ", 2)
             status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
+            for line in lines[1:]:
+                if b":" in line:
+                    k, _, v = line.partition(b":")
+                    resp_headers[k.decode("ascii", "replace").lower().strip()] = (
+                        v.decode("iso-8859-1", "replace").strip()
+                    )
         except (socket.timeout, OSError) as e:
             return HttpSample(sample_idx, dns_ms, tcp_ms, tls_ms, None,
                               _ms(overall_start), None, resolved_ip, f"http: {e}")
 
-        return HttpSample(
+        # ── Build sample with all captured response metadata ──
+        cl_raw = resp_headers.get("content-length")
+        try:
+            content_length = int(cl_raw) if cl_raw is not None else None
+        except ValueError:
+            content_length = None
+        sample = HttpSample(
             sample_idx, dns_ms, tcp_ms, tls_ms, ttfb_ms,
             _ms(overall_start), status, resolved_ip, None,
             tls_version=tls_meta.get("tls_version"),
@@ -175,7 +205,37 @@ def probe_once(
             cert_issuer_cn=tls_meta.get("cert_issuer_cn"),
             cert_not_after=tls_meta.get("cert_not_after"),
             cert_san_count=tls_meta.get("cert_san_count"),
+            content_length=content_length,
+            content_type=resp_headers.get("content-type"),
+            content_encoding=resp_headers.get("content-encoding"),
+            server=resp_headers.get("server"),
+            cache_status=resp_headers.get("x-cache") or resp_headers.get("cf-cache-status"),
         )
+
+        # ── Follow redirects if asked and status is 3xx + has Location ──
+        if (follow_redirects and status is not None and 300 <= status < 400
+                and resp_headers.get("location") and _depth < max_redirects):
+            chain = list(_redirect_chain or [])
+            chain.append({"status": status, "location": resp_headers["location"]})
+            next_url = resp_headers["location"]
+            # Resolve relative redirect
+            if next_url.startswith("/"):
+                p = urlparse(url)
+                next_url = f"{p.scheme}://{p.hostname}" + (f":{p.port}" if p.port else "") + next_url
+            elif not next_url.startswith(("http://", "https://")):
+                next_url = url.rsplit("/", 1)[0] + "/" + next_url
+            next_sample = probe_once(
+                next_url, method=method, timeout=timeout,
+                sample_idx=sample_idx, user_agent=user_agent,
+                follow_redirects=True, max_redirects=max_redirects,
+                _redirect_chain=chain, _depth=_depth + 1,
+            )
+            # Propagate redirect info to the final sample
+            next_sample.redirect_chain = chain
+            next_sample.final_url = next_url
+            return next_sample
+
+        return sample
     finally:
         try:
             ssock.close()
@@ -190,12 +250,14 @@ def probe_many(
     timeout: float = 10.0,
     interval: float = 0.5,
     force_ip: str | None = None,
+    follow_redirects: bool = False,
 ) -> list[HttpSample]:
     out = []
     for i in range(count):
         out.append(probe_once(
             url, method=method, timeout=timeout,
             sample_idx=i + 1, force_ip=force_ip,
+            follow_redirects=follow_redirects,
         ))
         if i + 1 < count:
             time.sleep(interval)

@@ -32,6 +32,16 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 def create_app(db_path: Path, start_scheduler: bool = True) -> FastAPI:
     app = FastAPI(title="mtrgraph")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    # Custom Jinja filter to decode JSON columns inline in templates
+    import json as _json
+    def _fromjson(v):
+        if not v:
+            return None
+        try:
+            return _json.loads(v)
+        except (ValueError, TypeError):
+            return None
+    templates.env.filters["fromjson"] = _fromjson
 
     scheduler = Scheduler(db_path)
     retention_days = int(os.environ.get("MTRGRAPH_RETENTION_DAYS", "30"))
