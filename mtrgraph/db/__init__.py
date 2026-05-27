@@ -220,6 +220,8 @@ def init_db(path: Path = DEFAULT_DB) -> None:
         _migrate_add_column(conn, "http_runs", "cache_status", "TEXT")
         _migrate_add_column(conn, "http_runs", "redirect_chain_json", "TEXT")
         _migrate_add_column(conn, "http_runs", "final_url", "TEXT")
+        # Tier 3: HTTP protocol negotiated (HTTP/1.1, HTTP/2, HTTP/3)
+        _migrate_add_column(conn, "http_runs", "http_version_used", "TEXT")
 
 
 @contextmanager

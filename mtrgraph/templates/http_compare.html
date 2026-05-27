@@ -24,14 +24,14 @@
     <h3>Run A · #{{ run_a.id }}</h3>
     <div class="meta-box">
       <div>{{ run_a.method }} <code style="color:var(--accent)">{{ run_a.url }}</code></div>
-      <div style="color:var(--muted); margin-top:4px">{{ run_a.samples }} samples · {{ run_a.started_at }} · IP {{ run_a.resolved_ip or '?' }} · status {{ run_a.status_summary or '-' }}</div>
+      <div style="color:var(--muted); margin-top:4px">{{ run_a.samples }} samples · {{ run_a.started_at }} · IP {{ run_a.resolved_ip or '?' }} · status {{ run_a.status_summary or '-' }}{% if run_a.http_version_used %} · proto <strong style="color:var(--fg)">{{ run_a.http_version_used }}</strong>{% endif %}</div>
     </div>
   </div>
   <div class="panel">
     <h3>Run B · #{{ run_b.id }}</h3>
     <div class="meta-box">
       <div>{{ run_b.method }} <code style="color:var(--accent)">{{ run_b.url }}</code></div>
-      <div style="color:var(--muted); margin-top:4px">{{ run_b.samples }} samples · {{ run_b.started_at }} · IP {{ run_b.resolved_ip or '?' }} · status {{ run_b.status_summary or '-' }}</div>
+      <div style="color:var(--muted); margin-top:4px">{{ run_b.samples }} samples · {{ run_b.started_at }} · IP {{ run_b.resolved_ip or '?' }} · status {{ run_b.status_summary or '-' }}{% if run_b.http_version_used %} · proto <strong style="color:var(--fg)">{{ run_b.http_version_used }}</strong>{% endif %}</div>
     </div>
   </div>
 </div>

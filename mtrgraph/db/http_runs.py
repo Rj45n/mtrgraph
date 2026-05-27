@@ -36,8 +36,8 @@ def insert_http_run(
                                  cert_issuer_cn, cert_not_after, cert_san_count,
                                  content_length, content_type, content_encoding,
                                  server_header, cache_status,
-                                 redirect_chain_json, final_url)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 redirect_chain_json, final_url, http_version_used)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (url, method, label, samples,
          datetime.now(timezone.utc).isoformat(timespec="seconds"),
          resolved_ip, status_summary, errors,
@@ -46,7 +46,7 @@ def insert_http_run(
          r.get("content_length"), r.get("content_type"), r.get("content_encoding"),
          r.get("server"), r.get("cache_status"),
          _json.dumps(chain) if chain else None,
-         r.get("final_url")),
+         r.get("final_url"), r.get("http_version_used")),
     )
     return cur.lastrowid
 
@@ -68,8 +68,8 @@ def tls_meta_from_samples(samples: list) -> dict:
 
 
 def response_meta_from_samples(samples: list) -> dict:
-    """Pull response metadata (headers, body, redirects) from the first
-    successful sample (status 2xx/3xx)."""
+    """Pull response metadata (headers, body, redirects, http version) from
+    the first successful sample (status 2xx/3xx)."""
     for s in samples:
         status = getattr(s, "status", None)
         if status is not None and 200 <= status < 400:
@@ -81,6 +81,7 @@ def response_meta_from_samples(samples: list) -> dict:
                 "cache_status": getattr(s, "cache_status", None),
                 "redirect_chain": getattr(s, "redirect_chain", None),
                 "final_url": getattr(s, "final_url", None),
+                "http_version_used": getattr(s, "http_version_used", None),
             }
     return {}
 

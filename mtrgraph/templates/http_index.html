@@ -52,7 +52,7 @@ fetch("/api/http/url/history?url={{ current_url | urlencode }}").then(r => r.jso
 
 <table>
   <thead><tr>
-    <th>#</th><th>URL</th><th>Méthode</th><th>Samples</th>
+    <th>#</th><th>URL</th><th>Méthode</th><th>Proto</th><th>Samples</th>
     <th>Status</th><th>Errors</th><th>Label</th><th>Début</th><th></th>
   </tr></thead>
   <tbody>
@@ -61,6 +61,7 @@ fetch("/api/http/url/history?url={{ current_url | urlencode }}").then(r => r.jso
       <td class="num">{{ r.id }}</td>
       <td><a href="/http?url={{ r.url | urlencode }}" style="color:var(--accent)">{{ r.url }}</a></td>
       <td>{{ r.method }}</td>
+      <td>{% if r.http_version_used %}<span class="pill" style="background:{% if '2' in r.http_version_used or '3' in r.http_version_used %}#7c3aed{% else %}#475569{% endif %};color:#fff">{{ r.http_version_used }}</span>{% else %}<span style="color:var(--muted)">—</span>{% endif %}</td>
       <td class="num">{{ r.samples }}</td>
       <td><span class="pill" style="background:#334155;color:#e2e8f0">{{ r.status_summary or '-' }}</span></td>
       <td class="num {% if r.errors %}delta-pos{% endif %}">{{ r.errors }}</td>

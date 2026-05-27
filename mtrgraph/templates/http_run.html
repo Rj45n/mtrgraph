@@ -22,10 +22,11 @@
 </div>
 {% endif %}
 
-{% if run.content_type or run.content_length is not none or run.server_header or run.cache_status %}
+{% if run.content_type or run.content_length is not none or run.server_header or run.cache_status or run.http_version_used %}
 <div class="card" style="background:#0b1220; padding:10px 14px; border-radius:6px; margin-top:10px; border-left:3px solid #34d399">
   <div style="font-size:11px; color:var(--muted); text-transform:uppercase">Réponse HTTP</div>
   <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:6px; font-size:13px; font-family:monospace">
+    {% if run.http_version_used %}<span>Protocole: <strong style="color:{% if '2' in run.http_version_used or '3' in run.http_version_used %}#a78bfa{% else %}#94a3b8{% endif %}">{{ run.http_version_used }}</strong></span>{% endif %}
     {% if run.content_type %}<span>Content-Type: <strong>{{ run.content_type }}</strong></span>{% endif %}
     {% if run.content_length is not none %}<span>Content-Length: <strong>{{ run.content_length }}</strong> bytes</span>{% endif %}
     {% if run.content_encoding %}<span>Encoding: <strong>{{ run.content_encoding }}</strong></span>{% endif %}

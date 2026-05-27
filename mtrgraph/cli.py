@@ -170,11 +170,20 @@ def cmd_http(args: argparse.Namespace, console: Console) -> int:
         f"[cyan]▶ http[/] {args.method} {args.url}{ip_info} "
         f"(samples={args.count}, timeout={args.timeout}s)"
     )
-    samples = http_probe_many(
-        args.url, count=args.count, method=args.method,
-        timeout=args.timeout, interval=args.interval, force_ip=args.ip,
-        follow_redirects=getattr(args, "follow_redirects", False),
-    )
+    # HTTP/2 mode uses httpx (no DNS/TCP/TLS split, but real HTTP/2)
+    if getattr(args, "http_version", "1.1") == "2":
+        from .http_modern import probe_many_modern
+        samples = probe_many_modern(
+            args.url, count=args.count, http_version="2",
+            method=args.method if args.method != "HEAD" else "GET",  # httpx HEAD support is fine, but stream() needs GET-ish
+            timeout=args.timeout, interval=args.interval,
+        )
+    else:
+        samples = http_probe_many(
+            args.url, count=args.count, method=args.method,
+            timeout=args.timeout, interval=args.interval, force_ip=args.ip,
+            follow_redirects=getattr(args, "follow_redirects", False),
+        )
     agg = http_aggregate(samples)
     summary = http_status_summary(agg["status_counts"])
     resolved_ip = next((s.resolved_ip for s in samples if s.resolved_ip), None)
@@ -654,6 +663,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ne pas déclencher d'auto-MTR vers l'IP résolue après le probe")
     h.add_argument("--follow-redirects", action="store_true",
                    help="suivre les 3xx Location (max 5 hops), stocke la chaîne en DB")
+    h.add_argument("--http-version", choices=["1.1", "2"], default="1.1",
+                   help="protocole HTTP : '1.1' (stdlib, défaut, DNS/TCP/TLS séparés) ou '2' (httpx, ALPN négocié, total+TTFB seuls)")
     h.add_argument("-v", "--verbose", action="store_true", help="affiche aussi le détail par sample")
     _add_db_arg(h)
     h.set_defaults(func=cmd_http)

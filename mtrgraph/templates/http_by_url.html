@@ -113,8 +113,11 @@ function renderTls() {
     }
     const sanCount = last.cert_san_count !== null ? last.cert_san_count : '—';
     const tlsVCls = tlsv === 'TLSv1.3' ? 'green' : tlsv && tlsv.startsWith('TLSv1') ? 'yellow' : '';
+    const httpV = last.http_version_used || '—';
+    const httpVCls = httpV.includes('2') || httpV.includes('3') ? 'green' : (httpV !== '—' ? 'yellow' : '');
     document.getElementById('tls-content').innerHTML = `
       <div class="tls-grid">
+        <div class="tls-box ${httpVCls}"><div class="lab">HTTP version</div><div class="val">${httpV}</div></div>
         <div class="tls-box ${tlsVCls}"><div class="lab">TLS version</div><div class="val">${tlsv}</div></div>
         <div class="tls-box"><div class="lab">Cipher</div><div class="val" style="font-size:12px">${cipher}</div></div>
         <div class="tls-box"><div class="lab">Cert CN</div><div class="val" style="font-size:12px">${subj}</div></div>

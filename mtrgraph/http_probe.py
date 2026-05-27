@@ -44,6 +44,8 @@ class HttpSample:
     # in-process for callers that need them (synthetic transactions, etc.).
     response_headers: dict | None = None
     set_cookie_headers: list | None = None   # All Set-Cookie values (multi-value header)
+    # HTTP protocol version actually negotiated (HTTP/1.1, HTTP/2, HTTP/3)
+    http_version_used: str | None = None
 
 
 def _ms(start: float) -> float:
@@ -234,6 +236,7 @@ def probe_once(
             cache_status=resp_headers.get("x-cache") or resp_headers.get("cf-cache-status"),
             response_headers=resp_headers,
             set_cookie_headers=set_cookies or None,
+            http_version_used="HTTP/1.1",
         )
 
         # ── Follow redirects if asked and status is 3xx + has Location ──
