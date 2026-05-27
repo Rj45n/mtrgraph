@@ -126,4 +126,55 @@ def create_router(db_path: Path, templates) -> APIRouter:
             hops = [dict(h) for h in db.get_hops(conn, run_id)]
         return {"run": dict(run), "hops": hops}
 
+    @router.get("/mtr", response_class=HTMLResponse)
+    def mtr_targets_list(request: Request):
+        with db.session(db_path) as conn:
+            targets_rows = db.list_targets(conn)
+        return templates.TemplateResponse(
+            request, "mtr_targets.html",
+            {"targets": [dict(r) for r in targets_rows]},
+        )
+
+    @router.get("/mtr/target/{target}", response_class=HTMLResponse)
+    def mtr_target_page(request: Request, target: str):
+        with db.session(db_path) as conn:
+            targets_rows = db.list_targets(conn)
+        targets = [dict(r) for r in targets_rows]
+        return templates.TemplateResponse(
+            request, "mtr_target.html",
+            {"target": target, "targets": targets},
+        )
+
+    @router.get("/api/mtr/targets")
+    def api_mtr_targets():
+        with db.session(db_path) as conn:
+            rows = db.list_targets(conn)
+        return [dict(r) for r in rows]
+
+    @router.get("/api/mtr/target/{target}/series")
+    def api_mtr_target_series(target: str, last_n: int = 100):
+        """Per-hop latency timeseries (matrix hop × time)."""
+        with db.session(db_path) as conn:
+            return db.hop_matrix(conn, target, metric="avg_ms", last_n=last_n)
+
+    @router.get("/api/mtr/target/{target}/loss")
+    def api_mtr_target_loss(target: str, last_n: int = 100):
+        """Per-hop loss heatmap (matrix hop × time)."""
+        with db.session(db_path) as conn:
+            return db.hop_matrix(conn, target, metric="loss_pct", last_n=last_n)
+
+    @router.get("/api/mtr/target/{target}/latest")
+    def api_mtr_target_latest(target: str):
+        """The very last run for this target: used for topology + hop contribution."""
+        with db.session(db_path) as conn:
+            runs = conn.execute(
+                "SELECT * FROM runs WHERE target=? ORDER BY started_at DESC LIMIT 1",
+                (target,),
+            ).fetchall()
+            if not runs:
+                raise HTTPException(404)
+            r = runs[0]
+            hops = [dict(h) for h in db.get_hops(conn, r["id"])]
+        return {"run": dict(r), "hops": hops}
+
     return router

@@ -123,6 +123,81 @@ def delete_run(conn: sqlite3.Connection, run_id: int) -> None:
     conn.execute("DELETE FROM runs WHERE id=?", (run_id,))
 
 
+def list_targets(conn) -> list:
+    """Distinct MTR targets with counts and time-range, for the target picker."""
+    return conn.execute(
+        """SELECT target, COUNT(*) AS n_runs,
+                  MIN(started_at) AS oldest, MAX(started_at) AS newest
+           FROM runs GROUP BY target ORDER BY newest DESC"""
+    ).fetchall()
+
+
+def target_series(conn, target: str, last_n: int = 100, since_iso: str | None = None) -> list:
+    """Return the last N runs for `target` with their hops, ordered oldest→newest."""
+    sql = "SELECT * FROM runs WHERE target=?"
+    params: list = [target]
+    if since_iso:
+        sql += " AND started_at >= ?"
+        params.append(since_iso)
+    sql += " ORDER BY started_at DESC LIMIT ?"
+    params.append(last_n)
+    runs = conn.execute(sql, params).fetchall()
+    out = []
+    for r in reversed(runs):
+        hops = conn.execute(
+            "SELECT * FROM hops WHERE run_id=? ORDER BY hop_index", (r["id"],),
+        ).fetchall()
+        d = dict(r)
+        d["hops"] = [dict(h) for h in hops]
+        out.append(d)
+    return out
+
+
+def hop_matrix(conn, target: str, metric: str = "avg_ms",
+               last_n: int = 100, since_iso: str | None = None) -> dict:
+    """Build a hop × time matrix for the given metric (avg_ms | loss_pct).
+
+    Returns {timestamps, hop_ids, hop_labels, matrix: [[value]*n_runs]*n_hops}.
+    For avg_ms: hops with 100% loss return null (no measurement).
+    Hop identity is by hop_index (TTL position)."""
+    if metric not in ("avg_ms", "loss_pct"):
+        raise ValueError(f"invalid metric: {metric}")
+    series = target_series(conn, target, last_n=last_n, since_iso=since_iso)
+    if not series:
+        return {"timestamps": [], "hop_ids": [], "matrix": [], "hop_labels": []}
+    max_hop = max((h["hop_index"] for r in series for h in r["hops"]), default=0)
+    last_label: dict[int, str] = {}
+    for r in series:
+        for h in r["hops"]:
+            if h.get("host") and h["host"] != "???":
+                last_label[h["hop_index"]] = h["host"]
+    hop_ids = list(range(1, max_hop + 1))
+    hop_labels = [last_label.get(i, "???") for i in hop_ids]
+    matrix = []
+    for hid in hop_ids:
+        row = []
+        for r in series:
+            hop = next((h for h in r["hops"] if h["hop_index"] == hid), None)
+            if not hop:
+                row.append(None)
+                continue
+            if metric == "avg_ms":
+                # 100% loss = no measurement
+                if (hop.get("loss_pct") or 0) >= 100 or hop["avg_ms"] is None:
+                    row.append(None)
+                else:
+                    row.append(hop["avg_ms"])
+            else:  # loss_pct
+                row.append(hop["loss_pct"])
+        matrix.append(row)
+    return {
+        "timestamps": [r["started_at"] for r in series],
+        "hop_ids": hop_ids,
+        "hop_labels": hop_labels,
+        "matrix": matrix,
+    }
+
+
 def latest_mtr_rtt_for_ip(conn, ip: str, since_minutes: int = 60) -> float | None:
     """Return average RTT to `ip` from the most recent MTR run within `since_minutes`.
     Looks at the last hop of any matching run (target=ip OR ip seen as a hop)."""

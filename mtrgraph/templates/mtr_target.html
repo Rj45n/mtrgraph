@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .target-bar { display:flex; gap:10px; align-items:center; padding:12px 14px; background:#0b1220; border-radius:6px; margin-bottom:12px; flex-wrap:wrap }
+  .target-bar select, .target-bar input { padding:6px 8px; background:#020617; border:1px solid #334155; color:var(--fg); border-radius:4px; font-size:13px }
+  .target-bar label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px }
+  .hop-grid { display:grid; gap:2px; font-size:10px; overflow-x:auto }
+  .hop-grid .h-cell { min-width:12px; height:20px; border-radius:2px; display:flex; align-items:center; justify-content:center; color:#020617; font-weight:600; font-size:9px }
+  .hop-grid .h-label { white-space:nowrap; padding-right:8px; color:var(--muted); font-size:11px; line-height:20px; text-align:right }
+  .topo { display:flex; flex-direction:column; gap:4px; padding:8px 0 }
+  .topo-hop { display:flex; align-items:center; gap:10px; padding:6px 10px; background:#0b1220; border-radius:4px; border-left:3px solid var(--muted); font-size:12px }
+  .topo-hop .idx { font-weight:600; color:var(--muted); width:30px; text-align:right }
+  .topo-hop .host { font-family:monospace; font-size:11px; color:var(--fg); flex:1 }
+  .topo-hop .stat { font-variant-numeric:tabular-nums; color:var(--muted); font-size:11px }
+  .topo-hop.dropped { opacity:.5 }
+</style>
+
+<div class="target-bar">
+  <div>
+    <label>Target</label><br>
+    <select id="f-target" onchange="if(this.value) window.location='/mtr/target/'+this.value">
+      {% for t in targets %}
+        <option value="{{ t.target }}" {% if t.target == target %}selected{% endif %}>{{ t.target }} ({{ t.n_runs }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Derniers N runs</label><br>
+    <input id="f-last-n" type="number" value="100" min="10" max="2000">
+  </div>
+  <div style="flex:0">
+    <label>&nbsp;</label><br>
+    <button type="button" id="refresh-btn" style="padding:6px 14px; background:var(--accent); color:#020617; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600">↻ Refresh</button>
+  </div>
+</div>
+
+<h2 style="margin:0">MTR target : <code>{{ target }}</code></h2>
+
+<div class="panel">
+  <h3>1. Latence par hop dans le temps</h3>
+  <div class="help">Une ligne par hop. Si un hop dérive, ça saute aux yeux. Survole pour voir les valeurs.</div>
+  <canvas id="ch-hops-latency" height="160"></canvas>
+</div>
+
+<div class="panel">
+  <h3>2. Perte par hop (heatmap)</h3>
+  <div class="help">Y = hops (1 → final), X = runs (ancien → récent). Vert = 0% perte, rouge = 100%. Repère les hops qui flappent.</div>
+  <div id="loss-heatmap" style="margin-top:8px"></div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h3>3. Topologie du dernier run</h3>
+    <div class="help">Vue chemin : chaque hop avec son avg / loss. Bordure colorée selon état (vert OK, jaune loss, rouge dropped).</div>
+    <div id="topo"></div>
+  </div>
+  <div class="panel">
+    <h3>4. Contribution de chaque hop à la latence totale</h3>
+    <div class="help">Si un hop ajoute &gt;50% du delta, c'est ton goulot.</div>
+    <canvas id="ch-contrib" height="220"></canvas>
+  </div>
+</div>
+
+<div class="panel" id="route-stability-panel">
+  <h3>5. Stabilité de la route (changements de nombre de hops)</h3>
+  <div class="help" id="rs-help">Chargement…</div>
+  <div id="rs-events"></div>
+</div>
+
+<style>
+  .help { font-size:11px; color:var(--muted); margin-bottom:8px }
+  .panel { background:var(--panel); padding:14px; border-radius:6px; margin-bottom:14px }
+  .panel h3 { margin:0 0 8px 0; color:var(--accent); font-size:14px }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  @media (max-width: 1100px) { .grid2 { grid-template-columns: 1fr } }
+</style>
+
+<script>
+const TARGET = {{ target | tojson }};
+const charts = {};
+function chart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), cfg);
+}
+// Distinct colors per hop (cycles)
+const HOP_PALETTE = [
+  '#38bdf8','#f472b6','#eab308','#22d3ee','#a78bfa','#fb923c','#34d399','#f87171',
+  '#60a5fa','#fb7185','#facc15','#06b6d4','#c084fc','#fdba74','#10b981','#ef4444',
+];
+
+function fmtTs(iso) { return iso.replace('T',' ').slice(5,16); }
+
+function latencyColor(v) {
+  if (v === null || v === undefined) return '#666';
+  if (v >= 200) return '#b91c1c';
+  if (v >= 100) return '#dc2626';
+  if (v >= 50) return '#eab308';
+  return '#16a34a';
+}
+function lossColor(v) {
+  if (v === null || v === undefined) return '#0b1220';
+  if (v >= 50) return '#b91c1c';
+  if (v >= 10) return '#dc2626';
+  if (v >= 1) return '#eab308';
+  return '#16a34a';
+}
+
+async function loadLatency(lastN) {
+  const m = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/series?last_n=${lastN}`).then(r => r.json());
+  if (!m.hop_ids.length) {
+    document.getElementById('ch-hops-latency').replaceWith(
+      Object.assign(document.createElement('div'), {className:'help', textContent:'Aucune donnée pour cette cible.'})
+    );
+    return;
+  }
+  const labels = m.timestamps.map(fmtTs);
+  const datasets = m.hop_ids.map((hid, i) => ({
+    label: `hop ${hid}: ${(m.hop_labels[i] || '?').slice(0,30)}`,
+    data: m.matrix[i],
+    borderColor: HOP_PALETTE[i % HOP_PALETTE.length],
+    backgroundColor: HOP_PALETTE[i % HOP_PALETTE.length] + '20',
+    tension: .2, spanGaps: true, fill: false, borderWidth: 1.5, pointRadius: 0,
+  }));
+  chart('ch-hops-latency', {
+    type:'line',
+    data:{ labels, datasets },
+    options:{ responsive:true, interaction:{mode:'nearest', intersect:false}, scales:{
+      y:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'ms', color:'#94a3b8'} },
+      x:{ ticks:{color:'#94a3b8', maxRotation:0, autoSkipPadding:30} }
+    }, plugins:{ legend:{labels:{color:'#e2e8f0', boxWidth:10, font:{size:10}}, position:'right'} } }
+  });
+}
+
+async function loadLossHeatmap(lastN) {
+  const m = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/loss?last_n=${lastN}`).then(r => r.json());
+  const el = document.getElementById('loss-heatmap');
+  if (!m.hop_ids.length) {
+    el.innerHTML = '<div class="help">Aucune donnée.</div>';
+    return;
+  }
+  const n = m.timestamps.length;
+  // Grid: hop label (250px) + n cells (auto)
+  const cellW = Math.max(8, Math.min(20, Math.floor(800 / n)));
+  let html = `<div class="hop-grid" style="grid-template-columns: 250px repeat(${n}, ${cellW}px)">`;
+  // Header: empty + tick labels every ~10
+  html += '<div class="h-label"></div>';
+  for (let j = 0; j < n; j++) {
+    const lbl = (j === 0 || j === n-1 || j % Math.max(1, Math.floor(n / 10)) === 0)
+      ? fmtTs(m.timestamps[j]).slice(0,5) : '';
+    html += `<div class="h-cell" style="background:transparent;color:var(--muted);font-size:8px;font-weight:400">${lbl}</div>`;
+  }
+  // Rows
+  for (let i = 0; i < m.hop_ids.length; i++) {
+    const lbl = `${m.hop_ids[i]}. ${(m.hop_labels[i] || '???').slice(0,30)}`;
+    html += `<div class="h-label">${lbl}</div>`;
+    for (let j = 0; j < n; j++) {
+      const v = m.matrix[i][j];
+      const txt = (v !== null && v >= 1) ? Math.round(v) : '';
+      html += `<div class="h-cell" style="background:${lossColor(v)}" title="hop ${m.hop_ids[i]} @ ${fmtTs(m.timestamps[j])}: ${v===null?'pas de donnée':v.toFixed(1)+'%'}">${txt}</div>`;
+    }
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function loadTopologyAndContribution() {
+  const j = await fetch(`/api/mtr/target/${encodeURIComponent(TARGET)}/latest`).then(r => r.ok ? r.json() : null);
+  if (!j) {
+    document.getElementById('topo').innerHTML = '<div class="help">Aucun run.</div>';
+    return;
+  }
+  // Topology
+  const lastNonDropped = [...j.hops].reverse().find(h => (h.loss_pct || 0) < 100);
+  let html = '<div class="topo">';
+  let prevAvg = 0;
+  const contribs = [];
+  for (const h of j.hops) {
+    const dropped = (h.loss_pct || 0) >= 100;
+    const avg = h.avg_ms;
+    let border = '#94a3b8';
+    if (!dropped && avg !== null) border = latencyColor(avg);
+    if (h.loss_pct && h.loss_pct >= 1 && h.loss_pct < 100) border = '#eab308';
+    const delta = (avg !== null && !dropped) ? Math.max(0, avg - prevAvg) : null;
+    if (!dropped && avg !== null) {
+      contribs.push({ hop: h.hop_index, host: (h.host || '???').slice(0,25), delta });
+      prevAvg = avg;
+    } else {
+      contribs.push({ hop: h.hop_index, host: (h.host || '???').slice(0,25), delta: null });
+    }
+    html += `<div class="topo-hop ${dropped ? 'dropped' : ''}" style="border-left-color:${border}">
+      <span class="idx">${h.hop_index}</span>
+      <span class="host">${(h.host || '???')}</span>
+      <span class="stat">avg ${avg === null ? '—' : avg.toFixed(1)+'ms'}</span>
+      <span class="stat">loss ${h.loss_pct === null ? '—' : h.loss_pct.toFixed(0)+'%'}</span>
+      <span class="stat">stddev ${h.stddev_ms === null ? '—' : h.stddev_ms.toFixed(1)+'ms'}</span>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('topo').innerHTML = html;
+
+  // Contribution chart
+  const labels = contribs.map(c => `${c.hop} · ${c.host}`);
+  const data = contribs.map(c => c.delta);
+  chart('ch-contrib', {
+    type:'bar',
+    data:{ labels, datasets:[{
+      label:'Δ latence (ms) ajoutée par ce hop',
+      data,
+      backgroundColor: data.map(v => latencyColor(v ? v * 3 : 0)),  // *3 to emphasize colour scale
+    }]},
+    options:{ indexAxis:'y', responsive:true, scales:{
+      x:{ ticks:{color:'#94a3b8'}, title:{display:true,text:'Δ ms', color:'#94a3b8'}, beginAtZero:true },
+      y:{ ticks:{color:'#94a3b8', font:{size:11}} },
+    }, plugins:{ legend:{display:false}}}
+  });
+}
+
+async function loadRouteStability(lastN) {
+  const r = await fetch(`/api/dashboard/route-stability?target=${encodeURIComponent(TARGET)}&limit=${lastN}`).then(r => r.json());
+  const help = document.getElementById('rs-help');
+  const evts = document.getElementById('rs-events');
+  if (r.total_changes === 0) {
+    help.innerHTML = `Route stable sur les ${lastN} derniers runs. Hops actuels : <strong>${r.current_hops || '?'}</strong>.`;
+    evts.innerHTML = '';
+    return;
+  }
+  const sev = r.total_changes >= 5 ? 'red' : 'yellow';
+  help.innerHTML = `<span style="color:var(--${sev})">⚠ ${r.total_changes} changement(s) du nombre de hops</span> sur les ${lastN} derniers runs (route flapping). Hops actuels : <strong>${r.current_hops || '?'}</strong>.`;
+  evts.innerHTML = `<table class="compact" style="font-size:12px;margin-top:8px">
+    <thead><tr><th>Quand</th><th>Avant</th><th>Après</th><th>Delta</th></tr></thead>
+    <tbody>
+    ${r.changes.map(c => {
+      const d = c.to - c.from;
+      const sign = d > 0 ? '+' : '';
+      const col = d > 0 ? 'var(--red)' : 'var(--green)';
+      return `<tr><td class="meta">${fmtTs(c.at)}</td><td>${c.from}</td><td>${c.to}</td><td style="color:${col};font-weight:600">${sign}${d}</td></tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function reloadAll() {
+  const lastN = parseInt(document.getElementById('f-last-n').value || '100');
+  await Promise.all([
+    loadLatency(lastN),
+    loadLossHeatmap(lastN),
+    loadTopologyAndContribution(),
+    loadRouteStability(lastN),
+  ]);
+}
+document.getElementById('refresh-btn').addEventListener('click', reloadAll);
+document.getElementById('f-last-n').addEventListener('change', reloadAll);
+reloadAll();
+setInterval(reloadAll, 30000);
+</script>
+{% endblock %}

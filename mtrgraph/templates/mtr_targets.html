@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>MTR targets</h2>
+<p class="meta">Sélectionne une cible pour voir l'évolution par hop dans le temps.</p>
+
+{% if targets %}
+<table>
+  <thead><tr><th>Cible</th><th class="num">Runs</th><th>Premier run</th><th>Dernier run</th><th></th></tr></thead>
+  <tbody>
+  {% for t in targets %}
+    <tr>
+      <td><strong>{{ t.target }}</strong></td>
+      <td class="num">{{ t.n_runs }}</td>
+      <td class="meta">{{ t.oldest }}</td>
+      <td class="meta">{{ t.newest }}</td>
+      <td><a href="/mtr/target/{{ t.target }}" style="color:var(--accent)">📊 Détail par hop</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card">
+  <p class="meta">Aucune cible MTR encore. Lance un <code>mtrgraph run TARGET</code> ou crée un schedule MTR sur <a href="/schedules" style="color:var(--accent)">/schedules</a>.</p>
+</div>
+{% endif %}
+{% endblock %}

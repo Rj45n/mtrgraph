@@ -199,6 +199,7 @@ from .utils import proto_label  # noqa: E402
 from .mtr import (  # noqa: E402
     insert_run, finalize_run, insert_hops, list_runs, get_run, get_hops,
     latest_run_id, delete_run, baseline_hops, latest_mtr_rtt_for_ip,
+    list_targets, target_series, hop_matrix,
 )
 from .http_runs import (  # noqa: E402
     insert_http_run, finalize_http_run, insert_http_samples,
